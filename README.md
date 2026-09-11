@@ -14,7 +14,8 @@
 
 - **客户端** `client/nattunnel_client.py`(可打包 exe): 携带 authtoken(JWT, `-a` 参数或控制台输入)
   → 握手拉取隧道配置(前端端口 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`;
-  服务端改配置后经 `T_CONFIG` 帧**热更新**(端口/带宽即生效, 协议变更自动重连)。
+  服务端改配置后经 `T_CONFIG` 帧**热更新**(端口/带宽即生效, 协议变更自动重连);
+  exe 图标取自仓库根 `favicon.ico`(build.bat 构建时经 `--icon` 打进 exe)。
 - **后端** `server/`: FastAPI + MySQL(SQLAlchemy) + Redis, JWT 鉴权, RSA 公钥下发, `/tunnel/{id}` WebSocket 中继。
 - **公网侧**无需装任何东西: 任何支持 WS 的二进制客户端连 `wss://www.xxx.com/tunnel/<ID>` 即可;
   仓库自带测试工具 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py`。

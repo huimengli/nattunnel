@@ -32,7 +32,7 @@
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
 - [x] **纯 HTTP 直转**: 浏览器可直接打开 `http(s)://域名/tunnel/<短链>[/子路径]`(tcp 隧道, HttpBridgeMiddleware); nginx map 头兼容; HTML 响应注入 `<base>` 使相对引用(含 JS fetch)落在隧道前缀
 - [x] 本机冒烟实测: selftest 19/19 PASS + api_check 12 项全 PASS (sqlite+Redis, 2026-09-11)
-- [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe (~13.3MB), EXE 全链路 E2E PASS(真实回显)
+- [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe, EXE 全链路 E2E PASS(真实回显); **图标**: 仓库根 favicon.ico 经 build.bat `--icon` 打进 exe
 - [x] 去硬编码凭据: 管理员启动时初始化(.env/随机口令+日志一次性打印) + POST /api/password; 仓库无真实账号密码, 可推 git
 - [ ] 部署到真实服务器(MySQL/Redis/nginx TLS)并改管理员密码
 
@@ -106,6 +106,13 @@
   管理端"exe 客户端接入信息"卡片加"下载客户端 exe"按钮(Blob 下载, 401 自动登出)。
 - selftest 新增 D7(200 + exe 大小) → **20/20 ALL PASS**; api_check 加下载检查 → ALL PASS;
   实测: 带令牌 200 / CL=13341996(与磁盘一致) / `attachment` 头, 无令牌 401。
+
+### 2026-09-11 18:57 — records/2026-09-11-18-57-13.md
+
+- **exe 图标**: 用户放置仓库根 `favicon.ico`(64×64 ICO, 16958B); `build.bat` 加
+  `--icon ..\favicon.ico`(缺失时跳过不中断)。重新构建并**验证字节级嵌入**(PE 资源区含完整 16936B 图像载荷)。
+- 构建前需停掉运行中的 exe(onefile 父进程锁文件); 重建后重启 XgMacp2G 与 xN5MYedx 两客户端均在线,
+  llama.cpp `/health` 与下载端点(新 CL=13299500)正常。
 
 ## 踩坑备忘(后续会话必读)
 
