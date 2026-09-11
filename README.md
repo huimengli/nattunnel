@@ -57,11 +57,16 @@ python run.py                 # http://127.0.0.1:8000
 
 ## nginx(服务器)
 
-把 `server/nginx/nattunnel.conf` 放入 `/etc/nginx/conf.d/`, 有证书则启用 443 块,
+**独占域名**: 把 `server/nginx/nattunnel.conf` 放入 `/etc/nginx/conf.d/`, 有证书则启用 443 块,
 然后 `nginx -t && nginx -s reload`。关键点是 `/tunnel/` 的 Upgrade 头与长超时;
 该 location 同时服务 WS 握手(Upgrade: websocket → `Connection: upgrade`)与普通
 HTTP 浏览器请求(map `$connection_upgrade`, 无 Upgrade 时 → close);
 `location /` 反代网页管理端。
+
+**与现有站点混部(如 www.keliit.top 已跑其他站)**: 用 `server/nginx/nattunnel-embed.conf` —
+只往现有 vhost 加 `location /tunnel/`(原样直通) 与 `location /nattunnel-admin/`(剥前缀转发管理端),
+不新建 server 块。管理页 API 全为相对路径, 两种部署共用同一份代码;
+完整步骤见 `docs/deploy-keliit-top.md`。
 
 ## 网页管理端(浏览器)
 
@@ -85,6 +90,8 @@ python nattunnel_client.py -a <token> -s http://127.0.0.1:8000 -v
 # 打包 exe(把公网服务器地址写死进程序)
 build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 ```
+
+> `-s` 的地址宽容解析: 可省略 `https://`(自动补)、末尾可带 `/tunnel/` 之类路径(自动去掉)。
 
 **配置模型(无 config.json)**: 服务器地址在 `build.bat -s` **构建时写死**进 exe;
 隧道 ID/本地端口/协议/带宽/本地目标主机**全部运行时从服务器隧道设置读取**。

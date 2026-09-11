@@ -19,3 +19,4 @@ client/build_config.py   # build.bat 生成(含服务器地址), 不入库
 _tmp_*
 exe_out.log
 exe_err.log
+server/server_run.log

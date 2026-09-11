@@ -31,10 +31,12 @@
 - [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发/**客户端 exe 下载按钮**)
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
 - [x] **纯 HTTP 直转**: 浏览器可直接打开 `http(s)://域名/tunnel/<短链>[/子路径]`(tcp 隧道, HttpBridgeMiddleware); nginx map 头兼容; HTML 响应注入 `<base>` 使相对引用(含 JS fetch)落在隧道前缀
+- [x] **混部子路径部署就绪**: 管理页 API 全相对路径; `nginx/nattunnel-embed.conf`(现有 vhost 加 `/tunnel/` + `/nattunnel-admin/` 两块); HOST 默认只绑回环; `docs/deploy-keliit-top.md` 完整步骤
 - [x] 本机冒烟实测: selftest 20/20 PASS + api_check 13 项全 PASS (sqlite+Redis, 2026-09-11)
 - [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe, EXE 全链路 E2E PASS(真实回显); **图标**: 仓库根 favicon.ico 经 build.bat `--icon` 打进 exe
 - [x] 去硬编码凭据: 管理员启动时初始化(.env/随机口令+日志一次性打印) + POST /api/password; 仓库无真实账号密码, 可推 git
-- [ ] 部署到真实服务器(MySQL/Redis/nginx TLS)并改管理员密码
+- [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`(步骤见 docs/deploy-keliit-top.md);
+      客户端 exe 已内置该域名(2026-09-11 20:17 构建); 部署后改管理员密码
 
 ## 会话记录
 
@@ -121,6 +123,24 @@
   (models/schemas/API/网页弹窗/T_CONFIG), 客户端从服务器配置读取并可热更新。
 - selftest 20/20 + api_check 13 全 PASS; 实测 PATCH local_target_host 热更新后新流即用新主机。
 
+### 2026-09-11 20:21 — records/2026-09-11-20-21-38.md
+
+- **build.bat 乱码修复**: UTF-8 中文注释被 GBK 码页 cmd 解析成乱码命令 → 改**纯 ASCII**(英文注释+警示头),
+  踩坑备忘 #7。
+- **URL 宽容解析**: 客户端新增 `normalize_server()`(裸域名补 https://, 去末尾 `/tunnel/` 等路径);
+  用户原命令 `build.bat -s www.keliit.top/tunnel/` cmd 实跑构建成功 → exe(7.76MB)写死 www.keliit.top。
+- **发现**: www.keliit.top 当前托管的是另一站("个人网盘"), /api/health 返回字面量 `null` —
+  nattunnel 尚未部署到该域(本会话下半段完成子路径改造以支持混部部署)。
+
+### 2026-09-11 20:58 — records/2026-09-11-20-58-37.md
+
+- **混部子路径部署就绪**: 管理页 13 处 API 改相对路径(根/子路径同一份代码);
+  新增 `nginx/nattunnel-embed.conf`(现有 vhost: `/tunnel/` 原样直通 + `/nattunnel-admin/` 剥前缀, map 可复用);
+  `config.py` HOST 默认 0.0.0.0 → **127.0.0.1**(混部安全, 不放通 8000)。
+- `docs/deploy-keliit-top.md`: 上传(保仓库根布局)/venv/.env(首启 sqlite+Redis 可缺降级)/systemd 单 worker/nginx 嵌入/验证清单/安全注意。
+- 验证: 子路径模拟代理下管理页+登录+隧道列表全通; 服务器重启后两客户端自动重连; api_check 13 项 ALL PASS。
+- **待办**: keliit.top 服务器上按 docs/deploy-keliit-top.md 执行(本机无该服务器 SSH; 需用户提供或自行执行)。
+
 ## 踩坑备忘(后续会话必读)
 
 1. **PyInstaller --onefile 是双进程**: `Stop-Process -Id <父>` 会留下孤儿子进程继续运行;
@@ -133,6 +153,8 @@
 5. `RSA` 私钥对象无 `public_bytes`, 要 `key.public_key().public_bytes(...)`。
 6. **存量库加列**: 项目无迁移框架 — 在 `seed.py` 的 init_db 里做幂等 `ALTER TABLE`(捕获
    duplicate column/1060 忽略); 新建库由 create_all 处理。schema 演进一律走这个模式。
+7. **.bat 脚本必须纯 ASCII**: 中文 Windows 的 cmd 按 OEM 码页(GBK)解析 .bat, UTF-8 中文注释会
+   变成乱码命令甚至吃掉后续语句 — build.bat 已全部改英文注释并加了警示头。
 
 ## 风险 / 注意事项
 

@@ -239,7 +239,7 @@ async function downloadClient() {
   const btn = document.getElementById("download-client-btn");
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch("/api/client/download", { headers: { Authorization: "Bearer " + state.token } });
+    const res = await fetch("api/client/download", { headers: { Authorization: "Bearer " + state.token } });
     if (res.status === 401 && state.token) { doLogout(true); throw new Error("登录已过期"); }
     if (!res.ok) {
       let detail = "HTTP " + res.status;
@@ -281,7 +281,7 @@ document.getElementById("login-form").addEventListener("submit", async e => {
   const btn = document.getElementById("login-btn");
   btn.disabled = true; document.getElementById("login-err").textContent = "";
   try {
-    const out = await api("/api/login", { method: "POST", body: {
+    const out = await api("api/login", { method: "POST", body: {
       username: document.getElementById("login-user").value.trim(),
       password: document.getElementById("login-pass").value,
     }});
@@ -303,7 +303,7 @@ function doLogout(expired) {
 function logout() { doLogout(false); }
 
 async function enterApp() {
-  try { state.user = await api("/api/me"); } catch (e) { return; }
+  try { state.user = await api("api/me"); } catch (e) { return; }
   document.getElementById("login-view").style.display = "none";
   document.getElementById("app-view").style.display = "";
   document.getElementById("whoami").textContent = state.user.username + (state.user.role === "admin" ? "(管理员)" : "");
@@ -316,14 +316,14 @@ function stopTimer() { if (state.isTimer) { clearInterval(state.isTimer); state.
 
 /* ---------------- 刷新 ---------------- */
 async function refreshAll() {
-  try { await api("/api/health"); setHealth(true); } catch (e) { setHealth(false); return; }
+  try { await api("api/health"); setHealth(true); } catch (e) { setHealth(false); return; }
   try {
-    state.tunnels = await api("/api/tunnels") || [];
+    state.tunnels = await api("api/tunnels") || [];
     renderTunnels();
     fillTokenSelect();
   } catch (e) { /* 401 已处理 */ }
   if (state.user && state.user.role === "admin") {
-    try { state.users = await api("/api/users") || []; renderUsers(); } catch (e) {}
+    try { state.users = await api("api/users") || []; renderUsers(); } catch (e) {}
   }
 }
 function setHealth(ok) {
@@ -389,12 +389,12 @@ async function saveTunnel() {
   try {
     const idx = state.tunnels.findIndex(x => x.tunnel_id === tid);
     if (idx >= 0) {
-      await api("/api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, enabled } });
+      await api("api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, enabled } });
       toast("隧道已更新", "ok");
     } else {
       const body = { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw };
       if (tid) body.tunnel_id = tid;
-      await api("/api/tunnels", { method: "POST", body });
+      await api("api/tunnels", { method: "POST", body });
       toast("隧道已创建", "ok");
     }
     hideModal(); await refreshAll();
@@ -403,7 +403,7 @@ async function saveTunnel() {
 
 async function deleteTunnel(tid) {
   if (!confirm(`删除隧道 ${tid}? exe 将立即掉线。`)) return;
-  try { await api("/api/tunnels/" + tid, { method: "DELETE" }); toast("已删除", "ok"); await refreshAll(); }
+  try { await api("api/tunnels/" + tid, { method: "DELETE" }); toast("已删除", "ok"); await refreshAll(); }
   catch (e) { toast(e.message, "err"); }
 }
 
@@ -414,7 +414,7 @@ async function genToken(tid) {
   tid = sel.value;
   if (!tid) { toast("请先选择隧道", "err"); return; }
   try {
-    const out = await api("/api/tunnels/" + encodeURIComponent(tid) + "/token", { method: "POST" });
+    const out = await api("api/tunnels/" + encodeURIComponent(tid) + "/token", { method: "POST" });
     document.getElementById("token-pre").textContent = out.access_token;
     document.getElementById("token-pre").style.display = "block";
     document.getElementById("copy-token-btn").style.display = "";
@@ -478,12 +478,12 @@ async function saveUser() {
     role: document.getElementById("um-role").value,
   };
   if (body.username.length < 2 || body.password.length < 6) return toast("用户名≥2位, 密码≥6位", "err");
-  try { await api("/api/users", { method: "POST", body }); toast("用户已创建", "ok"); hideModal(); await refreshAll(); }
+  try { await api("api/users", { method: "POST", body }); toast("用户已创建", "ok"); hideModal(); await refreshAll(); }
   catch (e) { toast(e.message, "err"); }
 }
 async function deleteUser(username) {
   if (!confirm(`删除用户 ${username}? 其全部隧道将一并删除。`)) return;
-  try { await api("/api/users/" + username, { method: "DELETE" }); toast("已删除", "ok"); await refreshAll(); }
+  try { await api("api/users/" + username, { method: "DELETE" }); toast("已删除", "ok"); await refreshAll(); }
   catch (e) { toast(e.message, "err"); }
 }
 
@@ -493,7 +493,7 @@ async function savePassword() {
   const newp = document.getElementById("pm-new").value;
   if (!oldp || newp.length < 8) return toast("新密码至少 8 位", "err");
   try {
-    await api("/api/password", { method: "POST", body: { old_password: oldp, new_password: newp } });
+    await api("api/password", { method: "POST", body: { old_password: oldp, new_password: newp } });
     toast("密码已修改(当前会话仍有效)", "ok"); hideModal();
     document.getElementById("pm-old").value = ""; document.getElementById("pm-new").value = "";
   } catch (e) { toast(e.message, "err"); }

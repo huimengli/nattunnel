@@ -4,6 +4,7 @@ nattunnel 客户端 — 将无公网IP电脑的本地端口经服务器隧道映
 
 配置模型(无 config.json):
   - 服务器地址: build.bat -s <address> **构建 exe 时写死**进程序; 命令行 -s 可临时覆盖
+    (可写裸域名如 www.keliit.top, 省略 https:// 或带末尾 /tunnel/ 均可, 启动时自动规范化)
   - 其余全部(隧道 ID/端口/协议/带宽/本地目标主机): 运行时从服务器隧道设置读取
   - 隧道 ID 由绑定令牌携带(/api/me 的 tunnel_id)
 
@@ -33,6 +34,7 @@ import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -84,6 +86,19 @@ try:
     from build_config import SERVER as BUILTIN_SERVER
 except Exception:
     BUILTIN_SERVER = None
+
+
+def normalize_server(addr: str) -> str:
+    """规范化服务器地址: 缺省补 https://, 去掉主机后的路径(如末尾 /tunnel/)。"""
+    a = (addr or "").strip().rstrip("/")
+    if not a:
+        return ""
+    if "://" not in a:
+        a = "https://" + a
+    parts = urllib.parse.urlsplit(a)
+    if not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 log = logging.getLogger("nattunnel.client")
@@ -514,7 +529,8 @@ def resolve_tunnel_id(info: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="nattunnel client")
     parser.add_argument("-s", "--server", default=None,
-                        help="公网服务器地址(http/https); 覆盖构建时写死的地址(仅调试用)")
+                        help="公网服务器地址; 可省略 https://, 末尾路径(如 /tunnel/)自动忽略; "
+                             "仅调试用, 临时覆盖构建时写死的地址")
     parser.add_argument("-a", "--auth", default=None,
                         help="authtoken(网页管理端获取); 省略则启动后在控制台输入")
     parser.add_argument("-v", "--verbose", action="store_true", help="调试日志")
@@ -527,12 +543,13 @@ def main() -> None:
     )
     logging.getLogger("websockets").setLevel(logging.WARNING)
 
-    server = (args.server or BUILTIN_SERVER or "").strip()
-    if not server:
+    raw_server = (args.server or BUILTIN_SERVER or "").strip()
+    if not raw_server:
         print("未提供服务器地址: 构建 exe 时用 build.bat -s <地址> 写死, 或命令行 -s <地址>", file=sys.stderr)
         sys.exit(1)
-    if not (server.startswith("http://") or server.startswith("https://")):
-        print("-s 需要 http(s) 地址, 例如 https://www.xxx.com", file=sys.stderr)
+    server = normalize_server(raw_server)
+    if not server:
+        print(f"无法解析服务器地址: {raw_server!r} (需要 http(s) 主机[:端口])", file=sys.stderr)
         sys.exit(1)
     cfg = Config(server)
 

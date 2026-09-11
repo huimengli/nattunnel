@@ -32,7 +32,9 @@ JWT_EXPIRE_DAYS = int(_get("JWT_EXPIRE_DAYS", "7") or 7)
 INITIAL_ADMIN_USERNAME = _get("INITIAL_ADMIN_USERNAME", "admin")
 INITIAL_ADMIN_PASSWORD = _get("INITIAL_ADMIN_PASSWORD", "")
 
-HOST = _get("HOST", "0.0.0.0")
+# 监听地址: 默认只绑本机回环 — nginx 反代转发到 127.0.0.1:8000;
+# 混部服务器上保持默认, 避免 FastAPI(含管理页/隧道 WS) 不经 TLS 直接暴露公网。
+HOST = _get("HOST", "127.0.0.1")
 PORT = int(_get("PORT", "8000") or 8000)
 
 # WebSocket 单帧最大载荷(1 MiB), 客户端分片远小于此值
