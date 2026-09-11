@@ -3,6 +3,10 @@
 角色判定:
   - LAN 侧(客户端 exe): 握手携带有效 Bearer JWT, 且为隧道属主或管理员;
   - 公网侧: 其余连接(无需鉴权), 每个连接即一条独立流。
+
+同一路径 /tunnel/{tid} 还接受普通 HTTP 请求(无 WebSocket Upgrade):
+http_bridge.HttpBridgeMiddleware 把它转成隧道流直转发到本地服务,
+浏览器可 http/https 直接打开短链。
 """
 import logging
 from contextlib import asynccontextmanager
@@ -13,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import WS_MAX_SIZE
 from .database import SessionLocal
+from .http_bridge import HttpBridgeMiddleware
 from .models import Tunnel, User
 from .relay import (
     T_CLOSE,
@@ -54,6 +59,8 @@ app = FastAPI(title="nattunnel", version="0.1.0", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(tunnels.router)
+# /tunnel/{tid} 的纯 HTTP 直转(浏览器打开短链); WS 握手不受影响
+app.add_middleware(HttpBridgeMiddleware)
 
 
 @app.get("/api/health")
@@ -159,7 +166,7 @@ async def tunnel_ws(tid: str, websocket: WebSocket):
             msg = await websocket.receive_bytes()
             type_, fpid, payload = split_frame(msg)
             if role == "lan":
-                if type_ in data_types:
+                if type_ in data_types or type_ == T_FIN:
                     peer_ws = room.pubs.get(fpid)
                     if peer_ws is not None:
                         await _send_safe(peer_ws, type_, fpid, payload)

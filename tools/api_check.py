@@ -113,8 +113,22 @@ def main() -> None:
     http(server, f"/api/tunnels/{tunnel['tunnel_id']}/token", method="POST", token=tok)
     print("[PASS] 管理员亦可为任意隧道签发绑定令牌")
 
+    # 纯 HTTP 直转: 无 LAN 在线的 tcp 隧道 -> 503
+    ht = http(server, "/api/tunnels", method="POST", token=tok2,
+              body={"name": "api-check-http", "proto": "tcp", "local_port": 9100})
+    try:
+        urllib.request.urlopen(server + f"/tunnel/{ht['tunnel_id']}/", timeout=10)
+        print("[FAIL] HTTP 直转在 LAN 离线时应返回 503")
+        sys.exit(1)
+    except urllib.error.HTTPError as e:
+        assert e.code == 503, f"期望 503, 实际 {e.code}"
+        print("[PASS] 纯 HTTP 直转(LAN 离线) -> 503")
+
     # 清理: 删隧道 + 删临时用户(管理员)
     req = urllib.request.Request(server + f"/api/tunnels/{tunnel['tunnel_id']}", method="DELETE")
+    req.add_header("Authorization", f"Bearer {tok}")
+    urllib.request.urlopen(req, timeout=15)
+    req = urllib.request.Request(server + f"/api/tunnels/{ht['tunnel_id']}", method="DELETE")
     req.add_header("Authorization", f"Bearer {tok}")
     urllib.request.urlopen(req, timeout=15)
     req = urllib.request.Request(server + f"/api/users/{test_user}", method="DELETE")

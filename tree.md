@@ -16,16 +16,17 @@ nattunnel/
 │   ├── run.py                   # 入口: python run.py (server/ 目录下, 单 worker)
 │   ├── docker-compose.yml       # mysql 8 + redis 7 一键依赖
 │   ├── nginx/
-│   │   └── nattunnel.conf       # /tunnel/*(WS Upgrade) 与 /api/* 反代配置
+│   │   └── nattunnel.conf       # /tunnel/*(WS Upgrade + 纯 HTTP 直转) 与 /api/* 反代配置
 │   └── app/
 │       ├── __init__.py
-│       ├── main.py              # FastAPI 应用 + WS /tunnel/{tid} 中继主循环
+│       ├── main.py              # FastAPI 应用 + WS /tunnel/{tid} 中继主循环(T_FIN 转发)
 │       ├── config.py            # .env 配置读取
 │       ├── database.py          # SQLAlchemy engine/session/Base
 │       ├── models.py            # User / Tunnel / AppSetting
 │       ├── schemas.py           # Pydantic 请求/响应
 │       ├── security.py          # pbkdf2 密码哈希 / JWT / RSA 密钥对管理
-│       ├── deps.py              # Bearer 鉴权依赖(get_current_user/require_admin)
+│       ├── deps.py              # Bearer 鉴权依赖(get_current_user/require_admin/get_current_payload)
+│       ├── http_bridge.py       # /tunnel/{tid} 纯 HTTP 直转中间件(浏览器开短链, tcp 隧道)
 │       ├── relay.py             # Hub/Room 房间表, 帧编解码, Redis 在线状态/限流
 │       └── seed.py              # 建表 + 首启初始化管理员(.env/随机口令) + 隧道 XgMacp2G + RSA 键
 │       └── routers/

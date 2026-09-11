@@ -14,13 +14,16 @@
     python tools/selftest.py [--server http://127.0.0.1:8100] [--user admin]
 """
 import argparse
+import http.server
 import os
+import threading
 import asyncio
 import base64
 import json
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -91,6 +94,19 @@ def http_json(server: str, path: str, method="GET", body=None, token=None) -> di
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read().decode())
+
+
+def http_raw(server: str, path: str, method="GET", body=None, headers=None) -> tuple:
+    """普通 HTTP 请求, 返回 (status, resp_headers, body_bytes)。"""
+    req = urllib.request.Request(server + path, data=body, method=method)
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read()
 
 
 async def delete_tunnel(server: str, tid: str, token: str) -> None:
@@ -339,6 +355,108 @@ async def phase_bound(server: str, token: str) -> None:
         echo.close()
 
 
+# ------------------------------------------------------------- 阶段 D: 纯 HTTP 直转
+
+class _EchoHandler(http.server.BaseHTTPRequestHandler):
+    """最小 HTTP 回显服务: 把 method/path/query/bodylen 作为响应体返回。"""
+
+    def _echo(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        path, _, query = self.path.partition("?")
+        if path == "/page.html":
+            payload = (b"<!doctype html><html><head><title>echo</title></head>"
+                      b"<body>HTML-ECHO</body></html>")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        payload = (f"HTTP-ECHO method={self.command} path={path} "
+                   f"query={query} bodylen={len(body)}").encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    do_GET = _echo
+    do_POST = _echo
+    do_PUT = _echo
+
+    def log_message(self, *args):  # 静默
+        pass
+
+
+async def phase_http(server: str, token: str) -> None:
+    print(f"\n== 阶段 D: 纯 HTTP 直转(浏览器开短链) ==")
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _EchoHandler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    tid = None
+    tid_offline = None
+    client_task = None
+    loop = asyncio.get_running_loop()
+    try:
+        out = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-http", "proto": "tcp", "local_port": port,
+        })
+        tid = out["tunnel_id"]
+        client_task = start_client(server, tid, token)
+        online = await wait_lan_online(server, tid, token)
+        check("D1 客户端 lan 侧上线 (HTTP 隧道)", online)
+
+        if online:
+            status, _, body = await loop.run_in_executor(
+                None, lambda: http_raw(server, f"/tunnel/{tid}/hello?x=1"))
+            text = body.decode("utf-8", "replace")
+            check("D2 GET 直转: method/path/query 透传",
+                  status == 200 and "method=GET path=/hello query=x=1" in text, text[:120])
+
+            status, _, body = await loop.run_in_executor(
+                None, lambda: http_raw(server, f"/tunnel/{tid}/api", method="POST",
+                                       body=b"http-bridge-body",
+                                       headers={"Content-Type": "text/plain"}))
+            text = body.decode("utf-8", "replace")
+            check("D3 POST 直转: 请求体透传 (bodylen=16)",
+                  status == 200 and "method=POST path=/api" in text and "bodylen=16" in text, text[:120])
+
+            # nginx 对 /tunnel/ 的普通请求会带 Connection: upgrade(无 Upgrade) — 仍须直转成功
+            status, _, body = await loop.run_in_executor(
+                None, lambda: http_raw(server, f"/tunnel/{tid}/",
+                                       headers={"Connection": "upgrade"}))
+            check("D4 带 Connection: upgrade 头的 GET 仍正常直转 (nginx 兼容)",
+                  status == 200 and "HTTP-ECHO" in body.decode("utf-8", "replace"),
+                  body[:80].decode("utf-8", "replace"))
+
+            # D6: HTML 响应注入 <base>(相对引用钉在隧道前缀内) + Content-Length 同步
+            status, hdrs, body = await loop.run_in_executor(
+                None, lambda: http_raw(server, f"/tunnel/{tid}/page.html"))
+            expect_base = f'<base href="/tunnel/{tid}/">'.encode()
+            cl_val = next((v for k, v in hdrs.items() if k.lower() == "content-length"), None)
+            cl_ok = cl_val is not None and int(cl_val) == len(body)
+            check("D6 HTML 直转注入 <base> 且 Content-Length 同步",
+                  status == 200 and expect_base in body and b"<title>echo</title>" in body
+                  and body.rstrip().endswith(b"</html>") and cl_ok,
+                  f"{status} base={'yes' if expect_base in body else 'no'} "
+                  f"CL={cl_val} len={len(body)}")
+
+        out = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-http-offline", "proto": "tcp", "local_port": port + 1000,
+        })
+        tid_offline = out["tunnel_id"]
+        status, _, _ = await loop.run_in_executor(
+            None, lambda: http_raw(server, f"/tunnel/{tid_offline}/"))
+        check("D5 LAN 离线时返回 503", status == 503, str(status))
+    finally:
+        if client_task is not None:
+            await stop_client(client_task)
+        await delete_tunnel(server, tid, token)
+        await delete_tunnel(server, tid_offline, token)
+        srv.shutdown()
+
+
 # ------------------------------------------------------------- main
 
 async def main() -> None:
@@ -365,6 +483,7 @@ async def main() -> None:
     await phase_tcp(server, token)
     await phase_udp(server, token)
     await phase_bound(server, token)
+    await phase_http(server, token)
 
     print(f"\n结果: {len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

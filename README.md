@@ -18,6 +18,12 @@
 - **后端** `server/`: FastAPI + MySQL(SQLAlchemy) + Redis, JWT 鉴权, RSA 公钥下发, `/tunnel/{id}` WebSocket 中继。
 - **公网侧**无需装任何东西: 任何支持 WS 的二进制客户端连 `wss://www.xxx.com/tunnel/<ID>` 即可;
   仓库自带测试工具 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py`。
+- **浏览器直开(tcp 隧道)**: 同一路径 `/tunnel/<ID>` 同时接受普通 HTTP/HTTPS 请求 ——
+  服务端把请求经隧道直转发到本地服务并按流回传, 浏览器打开短链即可访问内网的 Web 应用;
+  udp 隧道仅支持 WS。
+- **HTML `<base>` 注入**: 对 text/html 响应在 `<head>` 后注入 `<base href="/tunnel/<ID>/">`,
+  把相对引用(CSS/JS/图标, 含 JS 运行时 fetch)钉在隧道前缀内 — 子路径部署的 Web 应用(liteLLM/llama.cpp UI 等)
+  浏览器开箱即用; gzip/chunked 的 HTML 不做注入(此类应用需自身支持子路径或改用 WS 客户端)。
 
 ## 管理员账号(启动时初始化, 代码无硬编码凭据)
 
@@ -52,6 +58,8 @@ python run.py                 # http://127.0.0.1:8000
 
 把 `server/nginx/nattunnel.conf` 放入 `/etc/nginx/conf.d/`, 有证书则启用 443 块,
 然后 `nginx -t && nginx -s reload`。关键点是 `/tunnel/` 的 Upgrade 头与长超时;
+该 location 同时服务 WS 握手(Upgrade: websocket → `Connection: upgrade`)与普通
+HTTP 浏览器请求(map `$connection_upgrade`, 无 Upgrade 时 → close);
 `location /` 反代网页管理端。
 
 ## 网页管理端(浏览器)
@@ -119,7 +127,8 @@ build.bat                            # 产物 dist\nattunnel-client.exe
 | GET | `/api/tunnels` | 我的隧道(admin 全部), 含 `lan_online`/`pub_count` |
 | POST | `/api/tunnels` | 建隧道 `{tunnel_id?(8位), name?, proto, local_port, bandwidth_kbps?}` |
 | GET/PATCH/DELETE | `/api/tunnels/{tid}` | 读/改(端口、协议、带宽、启用)/删 |
-| WS | `/tunnel/{tid}` | Bearer JWT 且属主/admin = LAN 侧; 否则公网侧 |
+| WS | `/tunnel/{tid}` | Bearer JWT 且属主/admin = LAN 侧; 否则公网侧(每条连接一条流) |
+| HTTP | `/tunnel/{tid}[/子路径]` | 纯 HTTP 直转(tcp 隧道): 浏览器直接打开短链访问内网 Web 服务; 无 LAN 在线 → 503 |
 
 ## 隧道帧协议(WS 二进制消息, 统一 5 字节头 `[type][peer_id BE32]`)
 
@@ -160,4 +169,6 @@ python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.
   `/api/login` 仍保留双通道(JSON / RSA 加密报文)供 API 侧登录 —— **都依赖 TLS**, 务必为域名配置 443。
 - 登录报文可经 RSA(2048) 公钥加密; JWT 默认 7 天有效, 密钥可经 `.env` 或自动持久化。
 - 公网侧入口本身不鉴权 —— **务必为 `www.xxx.com` 配置 TLS(443)**, 否则数据明文过网。
+- 纯 HTTP 直转使内网 Web 服务可被浏览器**免认证直接访问**: 若该服务自身无登录/鉴权,
+  请放在可信网络内或另行加防护(网关鉴权、IP 白名单等)。
 - 隧道 8 位短链可被猜到: 敏感业务请配合服务器防火墙限制源 IP, 或定期轮换 `tunnel_id`。

@@ -30,7 +30,8 @@
 - [x] 客户端: authtoken **绑定隧道**(`-a`/控制台, 凭令牌定位隧道 config 免填 tunnel_id)→握手拉配置→TCP/UDP 转发+令牌桶限流+自动重连; 启动显示公网访问短链; T_CONFIG 热更新(端口/带宽即生效, 协议变更自动重连); `-s/--server`; build.bat(PyInstaller)
 - [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发)
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
-- [x] 本机冒烟实测: selftest 9/9 PASS + api_check 全 PASS (sqlite+Redis, 2026-09-11)
+- [x] **纯 HTTP 直转**: 浏览器可直接打开 `http(s)://域名/tunnel/<短链>[/子路径]`(tcp 隧道, HttpBridgeMiddleware); nginx map 头兼容; HTML 响应注入 `<base>` 使相对引用(含 JS fetch)落在隧道前缀
+- [x] 本机冒烟实测: selftest 19/19 PASS + api_check 12 项全 PASS (sqlite+Redis, 2026-09-11)
 - [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe (~13.3MB), EXE 全链路 E2E PASS(真实回显)
 - [x] 去硬编码凭据: 管理员启动时初始化(.env/随机口令+日志一次性打印) + POST /api/password; 仓库无真实账号密码, 可推 git
 - [ ] 部署到真实服务器(MySQL/Redis/nginx TLS)并改管理员密码
@@ -73,6 +74,30 @@
 - 客户端启动横幅新增**公网访问短链** `{server}/tunnel/<8位随机短链>`(服务端自动生成)。
 - 网页管理端: 令牌卡片改为按隧道签发 + 每行"令牌"按钮; 接入片段去 tunnel_id。
 - selftest 新增阶段 C(C1–C4, 无 tunnel_id 配置凭令牌定位) → **13/13 PASS**; api_check 加绑定令牌检查 → ALL PASS。
+
+### 2026-09-11 16:53 — records/2026-09-11-16-53-59.md
+
+- **诊断**: 用户浏览器访问短链显示 `{"detail":"Not Found"}` — 非故障: `/tunnel/{id}` 原为纯 WS 端点,
+  普通 GET 落到静态挂载; 隧道与客户端均正常(经隧道实测收到 llama.cpp 200 HTML)。
+- **增强(浏览器直开短链)**: 新增 `server/app/http_bridge.py` — `/tunnel/{tid}[/子路径]` 接受纯 HTTP(无 Upgrade),
+  每请求一条隧道流转发到本地服务并流式回传(头限时 20s/CL+chunked+FIN 判尾; LAN 离线 503, udp 400)。
+  main.py: 注册中间件 + LAN 循环补转发 T_FIN; nginx conf: map `$connection_upgrade`(普通 HTTP 不再强推 upgrade)。
+- 踩坑两例: ①隧道模型无 `local_target_host`(Host 头改固定 127.0.0.1:<port>); ②`_send_lan` 空 payload 丢帧致 T_NEW 静默丢失 → 504, 已修。
+- selftest 新增阶段 D(D1–D5) → **18/18 PASS**; api_check 加"HTTP 直转离线 503" → ALL PASS;
+  实战: 浏览器式 GET `xN5MYedx` → **llama.cpp UI 200 完整 HTML** ✓。
+
+### 2026-09-11 18:00 — records/2026-09-11-18-00-20.md
+
+- **白屏诊断**: 浏览器开短链后页面本体 200, 但相对资源(`_app/...`/favicon/manifest)解析到
+  `/tunnel/_app/...`(掉出隧道 ID 前缀)→ 静态 404 白屏。根因: 文档 URL 不带尾斜杠时, 浏览器相对引用
+  以 `/tunnel/` 为基点。
+- **修复(HTML `<base>` 注入)**: 纯 HTTP 直转对 text/html 响应在 `<head>` 后注入
+  `<base href="/tunnel/{tid}/">`, 钉住全部相对解析(含 JS 运行时 fetch); Content-Length 同步 +注入长;
+  gzip/chunked 响应不注入(chunked 显式块大小会被插字节破坏)。
+- 踩坑: 首版注入后 `pop_body` 仍按原 CL 截断 → 尾部 31 字节丢失; `note_injected()` 修复。
+- selftest 新增 D6(注入 + CL 同步) → **19/19 ALL PASS**; api_check 回归 ALL PASS;
+  实战: llama.cpp UI 经隧道全资源加载(页面 12669B / bundle.js 8.8MB / CSS 542KB / favicon / manifest),
+  `/health` 透传 OK。
 
 ## 踩坑备忘(后续会话必读)
 
