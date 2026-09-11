@@ -1,0 +1,64 @@
+# nattunnel — 跨会话进度台账
+
+## 项目目标
+
+无公网 IP 电脑 ⇄ 有公网 IP 服务器(nginx 反代 www.xxx.com):
+客户端 exe 将本机端口转发到 `www.xxx.com/tunnel/<8位短链>`。
+技术栈: Python / FastAPI / MySQL / Redis / JWT / RSA 握手 / WebSocket 中继; 支持 tcp|udp、前端端口与带宽配置; 用户系统(管理员于首次启动时初始化, 凭据经 .env/日志, 代码无硬编码)。
+
+## 关键约定
+
+- 8 位短链: 字母表去混淆字符, 例 `XgMacp2G`; 自动生成或手工指定。
+- 角色判定: `/tunnel/{id}` WS 携带有效 Bearer JWT 且为属主/admin → LAN 侧; 否则公网侧(每连接一条流)。
+- 帧协议: `[type 1B][peer_id 4B BE][payload]`; 0x01 NEW / 0x02 DATA / 0x03 FIN / 0x04 CLOSE / 0x05 HELLO / 0x41 UDP-DATA。
+- 带宽由客户端令牌桶执行(双向共用, kbps, 0=不限)。
+- 中继状态在进程内存(Redis 记录在线状态与登录失败计数) → **必须单 worker**。
+
+## 凭据 / 环境
+
+| 项 | 值 |
+|---|---|
+| 管理员 | 首次启动初始化: `.env` 的 `INITIAL_ADMIN_USERNAME`(默认 admin)/`INITIAL_ADMIN_PASSWORD`(留空则随机生成+日志一次性打印), 登录后 POST /api/password 修改; 代码与文档无硬编码凭据 |
+| 示例隧道 | XgMacp2G (tcp, 3389, 不限速) |
+| 后端默认地址 | http://127.0.0.1:8000 (server/ 目录 `python run.py`) |
+| MySQL/Redis | server/docker-compose.yml 一键起 |
+
+## 状态总览
+
+- [x] 项目骨架 + 台账(progress.md / tree.md / records/)
+- [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据
+- [x] 客户端: RSA 登录→JWT→拉配置→TCP/UDP 转发+令牌桶限流+自动重连; build.bat(PyInstaller)
+- [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
+- [x] 本机冒烟实测: selftest 7/7 PASS + api_check 全 PASS (sqlite+Redis, 2026-09-11)
+- [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe (~13.3MB), EXE 全链路 E2E PASS(真实回显)
+- [ ] 部署到真实服务器(MySQL/Redis/nginx TLS)并改管理员密码
+
+## 会话记录
+
+### 2026-09-11 00:33 — records/2026-09-11-00-33-34.md
+
+- 从零搭建全部代码(server/app/*, client/*, tools/*, nginx, docker-compose)。
+- 设计并实现帧协议与角色判定; 种子化初始管理员(当时硬编码的凭据已于会话 2 全部移除)与示例隧道 XgMacp2G。
+- venv(py3.12)安装依赖; py_compile 全通过; sqlite 冒烟 + uvicorn:8100 实测。
+- selftest 端到端 7/7 PASS(TCP/UDP echo 往返, 进程内跑真实客户端代码)。
+- api_check PASS(建用户/越权403/建隧道/PATCH/列表/清理)。
+- EXE 构建成功并 E2E PASS: 公网侧 WS → EXE(lan) → 本地 echo 服务 → 原样回显。
+- 修复 4 个实测发现的 bug(详见记录文件的"缺陷与修复"节)。
+
+## 踩坑备忘(后续会话必读)
+
+1. **PyInstaller --onefile 是双进程**: `Stop-Process -Id <父>` 会留下孤儿子进程继续运行;
+   杀 exe 一律用 `taskkill /F /IM nattunnel-client.exe`。
+2. **TCP 竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成到达 → 主循环须先 `await open_tasks[pid]`
+   再入队(已在 run_tcp 中实现); 新增流逻辑时保持该顺序。
+3. `asyncio.DatagramTransport.sendto()` 是**同步方法**, 不能 await。
+4. sqlite 冒烟路径在并发 WS 风暴下会锁竞争卡死(服务器可自恢复); MySQL 生产无此问题,
+   但中继仍是单 worker 内存态 — 扩容前需 Redis Pub/Sub 化。
+5. `RSA` 私钥对象无 `public_bytes`, 要 `key.public_key().public_bytes(...)`。
+
+## 风险 / 注意事项
+
+1. 公网侧不鉴权 → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
+2. 多 worker 会破坏内存中继; 扩缩容需先做 Redis Pub/Sub 化(未来工作)。
+3. TCP 流为“每公网连接一条”, 不支持半关细粒度之外的复杂语义(对 RDP/SSH/HTTP 足够)。
+4. 客户端 config.json 明文存密码 — exe 分发场景请改用账号体系+单独配置。

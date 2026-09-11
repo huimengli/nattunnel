@@ -1,0 +1,7 @@
+INFO:     Started server process [8768]
+INFO:     Waiting for application startup.
+2026-09-11 12:23:04,162 INFO nattunnel.seed: database initialized (attempt 1)
+2026-09-11 12:23:04,162 INFO nattunnel.main: redis ok
+2026-09-11 12:23:04,162 INFO nattunnel.main: nattunnel ready (single worker required)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8102 (Press CTRL+C to quit)

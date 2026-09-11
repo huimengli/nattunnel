@@ -1,0 +1,121 @@
+# nattunnel — 本地端口经公网服务器隧道映射
+
+无公网 IP 的电脑, 通过一台有公网 IP 的服务器(nginx 反代 `www.xxx.com`),
+把本机端口转发到公网入口 `www.xxx.com/tunnel/<8位短链>`。
+
+```
+[互联网用户]                [服务器(公网IP)]                      [内网电脑]
+   |                            |                                    |
+   | wss://www.xxx.com/        | nginx                             | nattunnel-client.exe
+   |   tunnel/XgMacp2G  ------>|  /tunnel/* --WS--> FastAPI :8000  <-|  (出站 WS, Bearer JWT)
+   |                            |              |                    |
+   |                            |        MySQL(用户/隧道)  Redis(在线状态/限流计数)
+```
+
+- **客户端** `client/nattunnel_client.py`(可打包 exe): RSA 握手登录拿 JWT → 拉取隧道配置
+  (前端端口 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`。
+- **后端** `server/`: FastAPI + MySQL(SQLAlchemy) + Redis, JWT 鉴权, RSA 公钥下发, `/tunnel/{id}` WebSocket 中继。
+- **公网侧**无需装任何东西: 任何支持 WS 的二进制客户端连 `wss://www.xxx.com/tunnel/<ID>` 即可;
+  仓库自带测试工具 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py`。
+
+## 管理员账号(启动时初始化, 代码无硬编码凭据)
+
+首次启动(数据库中还没有 admin)时自动创建, 凭据来自 `server/.env`(不入库):
+
+- `INITIAL_ADMIN_USERNAME` (默认 `admin`) / `INITIAL_ADMIN_PASSWORD`;
+- **密码留空** → 生成 16 位随机强口令, 在启动日志中**一次性**打印;
+- 登录后立即改密: `POST /api/password` `{old_password, new_password}`;
+- 已存在 admin 时永不覆盖(重启动不重建)。
+
+| 项 | 值 |
+|---|---|
+| 示例隧道短链 | `XgMacp2G` (tcp, 本机端口 3389, 不限速, 可删) |
+
+## 快速开始(服务器端)
+
+```bash
+cd server
+# 1) 依赖库(MySQL/Redis), 二选一:
+docker compose up -d
+#    或自行安装并保证 .env 中连接串正确
+# 2) 配置(.env 不入库; 生产环境建议显式设置 INITIAL_ADMIN_PASSWORD)
+cp .env.example .env          # 按需修改
+python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+# 3) 启动(必须单 worker; 在 server/ 目录下)
+python run.py                 # http://127.0.0.1:8000
+# 4) 首次启动后: 用 .env/日志中的账号登录, 调用 POST /api/password 修改密码
+```
+
+## nginx(服务器)
+
+把 `server/nginx/nattunnel.conf` 放入 `/etc/nginx/conf.d/`, 有证书则启用 443 块,
+然后 `nginx -t && nginx -s reload`。关键点是 `/tunnel/` 的 Upgrade 头与长超时。
+
+## 客户端(内网电脑)
+
+```bash
+cd client
+# 开发模式
+pip install -r requirements.txt
+copy config.example.json config.json   # 按实际改 server/tunnel_id/账号
+python nattunnel_client.py -v
+# 打包 exe
+build.bat                            # 产物 dist\nattunnel-client.exe
+```
+
+exe 与 `config.json` 放同一目录即可运行; 隧道掉线自动指数退避重连(1s→30s)。
+
+## API 一览 (JWT: `Authorization: Bearer <token>`)
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/health` | 健康检查(redis 状态) |
+| GET | `/api/auth/public-key` | RSA 公钥(PEM) |
+| POST | `/api/login` | `{secure_payload}` = base64(RSA(JSON{username,password})) → JWT |
+| GET | `/api/me` | 当前用户 |
+| POST | `/api/password` | 修改本人密码 `{old_password, new_password(>=8位)}` |
+| GET/POST | `/api/users` | 管理员: 列/建用户 `{username,password,role?}` |
+| DELETE | `/api/users/{username}` | 管理员: 删用户(级联删其隧道) |
+| GET | `/api/tunnels` | 我的隧道(admin 全部), 含 `lan_online`/`pub_count` |
+| POST | `/api/tunnels` | 建隧道 `{tunnel_id?(8位), name?, proto, local_port, bandwidth_kbps?}` |
+| GET/PATCH/DELETE | `/api/tunnels/{tid}` | 读/改(端口、协议、带宽、启用)/删 |
+| WS | `/tunnel/{tid}` | Bearer JWT 且属主/admin = LAN 侧; 否则公网侧 |
+
+## 隧道帧协议(WS 二进制消息, 统一 5 字节头 `[type][peer_id BE32]`)
+
+| type | 含义 |
+|---|---|
+| `0x01` NEW_STREAM | server→LAN: 公网对端(pid)已连接, 请建立本地连接 |
+| `0x02` DATA | TCP 字节流(双向, 按 pid 路由) |
+| `0x03` FIN | 流结束(半关) |
+| `0x04` CLOSE | 流拆除 |
+| `0x05` HELLO | server→公网侧: 分配 peer_id |
+| `0x41` DATA(UDP) | UDP 数据报(双向, 按 pid 路由) |
+
+- TCP: 每个公网 WS 连接 = 一条流; LAN 侧收到 NEW_STREAM 后 connect `<local_target_host>:<local_port>`。
+- UDP: 每个公网 WS 连接 = 一个对端; LAN 侧为该对端起 127.0.0.1 临时 socket, 数据报经隧道发到本机服务端口。
+- 带宽: `bandwidth_kbps`(0=不限)由客户端令牌桶执行, 双向共用。
+
+## 端到端自测(无需公网)
+
+```bash
+# 1) 用 sqlite 起一个临时服务器(冒烟路径 Redis 可缺省), 建议同时设置初始管理员
+cd server && DATABASE_URL="sqlite:///./selftest.db" \
+    INITIAL_ADMIN_PASSWORD="dev-only-12345" \
+    python -m uvicorn app.main:app --port 8100
+# 2) 另一终端(测试凭据走参数/环境变量, 不入库)
+NATTUNNEL_TEST_PASSWORD=dev-only-12345 python tools/selftest.py --server http://127.0.0.1:8100
+python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.0.1:8100
+```
+
+## 目录结构
+
+见根目录 `tree.md`; 跨会话进度台账见 `progress.md`, 每次会话记录在 `records/`。
+
+## 安全说明
+
+- **仓库内无任何硬编码账号密码**: 管理员于首次启动时初始化(见上节), `.env` 与 `client/config.json` 均被 gitignore。
+- 登录报文经 RSA(2048) 公钥加密; JWT 默认 7 天有效, 密钥可经 `.env` 或自动持久化。
+- 公网侧入口本身不鉴权 —— **务必为 `www.xxx.com` 配置 TLS(443)**, 否则数据明文过网。
+- 隧道 8 位短链可被猜到: 敏感业务请配合服务器防火墙限制源 IP, 或定期轮换 `tunnel_id`。

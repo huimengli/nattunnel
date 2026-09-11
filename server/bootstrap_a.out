@@ -1,0 +1,8 @@
+INFO:     127.0.0.1:8571 - "GET /api/auth/public-key HTTP/1.1" 200 OK
+INFO:     127.0.0.1:8572 - "POST /api/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:8573 - "GET /api/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:8574 - "POST /api/password HTTP/1.1" 204 No Content
+INFO:     127.0.0.1:8577 - "GET /api/auth/public-key HTTP/1.1" 200 OK
+INFO:     127.0.0.1:8578 - "POST /api/login HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:8579 - "GET /api/auth/public-key HTTP/1.1" 200 OK
+INFO:     127.0.0.1:8580 - "POST /api/login HTTP/1.1" 200 OK

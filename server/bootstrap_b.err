@@ -1,0 +1,12 @@
+INFO:     Started server process [16652]
+INFO:     Waiting for application startup.
+2026-09-11 12:21:46,846 WARNING nattunnel.seed: ========================================================================
+2026-09-11 12:21:46,846 WARNING nattunnel.seed: 首次启动: 已初始化管理员 'admin', 临时密码(仅此一次打印): lsAF9Uz0pERUcqiN
+2026-09-11 12:21:46,846 WARNING nattunnel.seed: 请立即登录并调用 POST /api/password 修改密码!
+2026-09-11 12:21:46,846 WARNING nattunnel.seed: ========================================================================
+2026-09-11 12:21:46,856 INFO nattunnel.seed: seeded demo tunnel XgMacp2G
+2026-09-11 12:21:46,947 INFO nattunnel.seed: database initialized (attempt 1)
+2026-09-11 12:21:46,947 INFO nattunnel.main: redis ok
+2026-09-11 12:21:46,947 INFO nattunnel.main: nattunnel ready (single worker required)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8102 (Press CTRL+C to quit)

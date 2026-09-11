@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+client/.venv/
+
+# 本地数据库/配置(勿提交凭据)
+server/.env
+server/*.db
+*.sqlite*
+client/config.json
+
+# PyInstaller 产物
+client/dist/
+client/build/
+client/nattunnel_client.spec
+
+# 临时测试文件
+_tmp_*
+exe_out.log
+exe_err.log
