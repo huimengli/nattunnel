@@ -10,6 +10,7 @@ import os
 import base64
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -24,7 +25,8 @@ def http(server, path, method="GET", body=None, token=None):
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode())
+        raw = r.read()
+        return json.loads(raw.decode()) if raw else None
 
 
 def rsa_login(server, pub_pem: str, username: str, password: str) -> str:
@@ -61,7 +63,7 @@ def main() -> None:
     me = http(server, "/api/me", token=tok)
     print("[PASS] 登录/me:", me)
 
-    test_user = "apicheck_tmp"
+    test_user = f"apicheck_{int(time.time() * 1000) % 1000000:06d}"
     created = http(server, "/api/users", method="POST", token=tok,
                    body={"username": test_user, "password": "apicheck123", "role": "user"})
     print("[PASS] 建用户:", created["username"])

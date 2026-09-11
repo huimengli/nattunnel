@@ -31,6 +31,7 @@
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
 - [x] 本机冒烟实测: selftest 7/7 PASS + api_check 全 PASS (sqlite+Redis, 2026-09-11)
 - [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe (~13.3MB), EXE 全链路 E2E PASS(真实回显)
+- [x] 去硬编码凭据: 管理员启动时初始化(.env/随机口令+日志一次性打印) + POST /api/password; 仓库无真实账号密码, 可推 git
 - [ ] 部署到真实服务器(MySQL/Redis/nginx TLS)并改管理员密码
 
 ## 会话记录
@@ -44,6 +45,12 @@
 - api_check PASS(建用户/越权403/建隧道/PATCH/列表/清理)。
 - EXE 构建成功并 E2E PASS: 公网侧 WS → EXE(lan) → 本地 echo 服务 → 原样回显。
 - 修复 4 个实测发现的 bug(详见记录文件的"缺陷与修复"节)。
+
+### 2026-09-11 11:19 — records/2026-09-11-11-19-31.md
+
+- 因项目要推 git, 移除全部硬编码管理员凭据(lt 账号): seed 改为**首启初始化**(env 密码或随机 16 位口令+日志一次性打印), 已有 admin 永不覆盖。
+- 新增 `POST /api/password`(改密); `.env`/`client/config.json` 纳入 gitignore; 测试脚本凭据走参数/环境变量。
+- 实测: env 首启/随机首启/改密/重启不重置/api_check 回归 全 PASS; grep 复核仓库零残留, 可安全推送。
 
 ## 踩坑备忘(后续会话必读)
 

@@ -7,7 +7,8 @@ nattunnel/
 ├── README.md                    # 总览与快速开始
 ├── .gitignore                   # venv/db/exe 产物/临时文件
 ├── records/                     # 每次会话记录 yyyy-MM-dd-hh-mm-ss.md
-│   └── 2026-09-11-00-33-34.md   # 会话 1: 全量代码 + 自测 + EXE 验收
+│   ├── 2026-09-11-00-33-34.md   # 会话 1: 全量代码 + 自测 + EXE 验收
+│   └── 2026-09-11-11-19-31.md   # 会话 2: 移除硬编码凭据, 管理员启动时初始化
 │
 ├── server/                      # FastAPI 后端
 │   ├── requirements.txt         # fastapi/uvicorn/sqlalchemy/pymysql/cryptography/PyJWT/redis/dotenv

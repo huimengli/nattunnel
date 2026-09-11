@@ -1,3 +1,0 @@
-INFO:     127.0.0.1:8944 - "GET /api/auth/public-key HTTP/1.1" 200 OK
-INFO:     127.0.0.1:8945 - "POST /api/login HTTP/1.1" 200 OK
-INFO:     127.0.0.1:8949 - "GET /api/me HTTP/1.1" 200 OK
