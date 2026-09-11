@@ -21,7 +21,6 @@ import asyncio
 import base64
 import json
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -145,24 +144,24 @@ async def wait_lan_online(server: str, tunnel_id: str, token: str, timeout: floa
     return False
 
 
-def start_client(server: str, tunnel_id: str, token: str, include_tid: bool = True) -> asyncio.Task:
+def start_client(server: str, tunnel_id: str, token: str) -> asyncio.Task:
     """在进程内启动真实客户端代码(每阶段先复位 STOP 标志)。
 
-    include_tid=False: config 不写 tunnel_id — 客户端须完全靠令牌绑定的隧道 ID。
+    新配置模型(无本地配置文件): 服务器地址直接传入; 令牌若是管理员/普通令牌,
+    先换成该隧道的绑定令牌 — 客户端完全凭令牌定位隧道。
     """
     client.STOP = False
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
-        cfg_raw = {"server": server}
-        if include_tid:
-            cfg_raw["tunnel_id"] = tunnel_id
-        json.dump(cfg_raw, f)
-        cfg_path = f.name
-    c = client.Config(Path(cfg_path))
-    if not include_tid:
-        # 模拟 main(): /api/me 学令牌绑定的隧道 ID, 覆盖空配置
-        info = client.verify_token(c, token)
-        client.resolve_tunnel_id(c, info)
-    return asyncio.create_task(client.run(c, token))
+    cfg = client.Config(server)
+    info = client.verify_token(cfg, token)
+    if (info.get("tunnel_id") or "").strip() != tunnel_id:
+        tok = http_json(server, f"/api/tunnels/{tunnel_id}/token", method="POST", token=token)
+        bound = tok.get("access_token", "")
+        assert bound, "未能签发绑定令牌"
+        token = bound
+        info = client.verify_token(cfg, token)
+    tid = client.resolve_tunnel_id(info)
+    assert tid == tunnel_id, f"令牌应绑定 {tunnel_id}, 实为 {tid}"
+    return asyncio.create_task(client.run(cfg, token, tid))
 
 
 async def stop_client(task: asyncio.Task) -> None:
@@ -322,10 +321,10 @@ async def phase_bound(server: str, token: str) -> None:
         me = http_json(server, "/api/me", token=bound)
         check("C2 /me 返回绑定隧道的 ID", me.get("tunnel_id") == tid, repr(me.get("tunnel_id")))
 
-        # config 不写 tunnel_id — 客户端须完全靠令牌确定隧道
-        client_task = start_client(server, tid, bound, include_tid=False)
+        # 客户端完全凭令牌确定隧道(无任何本地配置)
+        client_task = start_client(server, tid, bound)
         online = await wait_lan_online(server, tid, token)
-        check("C3 客户端凭令牌定位正确隧道 (config 无 tunnel_id)", online)
+        check("C3 客户端凭令牌定位正确隧道 (无本地配置)", online)
         if not online:
             return
 

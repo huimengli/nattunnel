@@ -13,7 +13,7 @@
 ```
 
 - **客户端** `client/nattunnel_client.py`(可打包 exe): 携带 authtoken(JWT, `-a` 参数或控制台输入)
-  → 握手拉取隧道配置(前端端口 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`;
+  → 握手拉取隧道配置(前端端口 / 本地目标主机 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`;
   服务端改配置后经 `T_CONFIG` 帧**热更新**(端口/带宽即生效, 协议变更自动重连);
   exe 图标取自仓库根 `favicon.ico`(build.bat 构建时经 `--icon` 打进 exe)。
 - **后端** `server/`: FastAPI + MySQL(SQLAlchemy) + Redis, JWT 鉴权, RSA 公钥下发, `/tunnel/{id}` WebSocket 中继。
@@ -69,9 +69,9 @@ HTTP 浏览器请求(map `$connection_upgrade`, 无 Upgrade 时 → close);
 
 - **登录**: 用户名+密码(JSON 经 TLS 传输) → JWT(存 sessionStorage);
 - **认证令牌(绑定隧道)**: 选择某条隧道签发携带其 ID 的 authtoken, exe 凭它定位隧道(每行隧道的“令牌”按钮可直接签发);
-- **隧道配置**: 列表(含 exe 在线状态/公网连接数)、新建/编辑(协议、本地端口、带宽、启用)/删除;
+- **隧道配置**: 列表(含 exe 在线状态/公网连接数)、新建/编辑(协议、本地端口、本地目标主机、带宽、启用)/删除;
   改动即时热推给在线客户端(T_CONFIG), 无需重启 exe;
-- **客户端接入信息**: 一键复制每条隧道对应的 `config.json` 片段给 exe;
+- **客户端接入信息**: 一键复制每条隧道的启动说明(绑定令牌 + 当前配置摘要); exe 可直接从该页下载;
 - **用户管理**(仅管理员): 建/删用户; **修改密码**: 本人在线改密。
 - 页面每 5 秒自动刷新状态; 单文件无构建依赖(`server/app/static/index.html`)。
 
@@ -79,13 +79,15 @@ HTTP 浏览器请求(map `$connection_upgrade`, 无 Upgrade 时 → close);
 
 ```bash
 cd client
-# 开发模式
+# 开发模式(无 config.json; 服务器地址: build_config.py 存在则用其值, 否则 -s 指定)
 pip install -r requirements.txt
-copy config.example.json config.json   # 按实际改 server(tunnel_id 由绑定令牌决定, 不必填)
-python nattunnel_client.py -v
-# 打包 exe
-build.bat                            # 产物 dist\nattunnel-client.exe
+python nattunnel_client.py -a <token> -s http://127.0.0.1:8000 -v
+# 打包 exe(把公网服务器地址写死进程序)
+build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 ```
+
+**配置模型(无 config.json)**: 服务器地址在 `build.bat -s` **构建时写死**进 exe;
+隧道 ID/本地端口/协议/带宽/本地目标主机**全部运行时从服务器隧道设置读取**。
 
 **启动必须提供 authtoken**(网页管理端对目标隧道签发), 两种途径:
 
@@ -96,21 +98,17 @@ build.bat                            # 产物 dist\nattunnel-client.exe
 
 **令牌与隧道绑定**: 网页管理端对每条隧道签发的令牌都携带该隧道的 ID。客户端启动时
 先 `GET /api/me` 从令牌里读到绑定的 `tunnel_id`, 据此确定要转发哪个隧道的配置 ——
-**`config.json` 不再需要写 tunnel_id**(旧配置/未绑定令牌仍可回退用 config 里的值)。
+**未绑定令牌的令牌直接拒启**(提示去网页重新签发)。
 启动横幅会打印**公网访问短链** `http(s)://服务器/tunnel/<8位随机短链>`(服务端自动生成), 供公网侧接入。
 
-可选参数:
-
-- `-s/--server http(s)://公网服务器` — 覆盖 `config.json` 里的 `server`;
-- `--config <路径>` — 指定配置位置(exe 默认取同目录 `config.json`)。
-
-`config.json` 只需 `{server, local_target_host?, verify_ssl?}`(无需账号密码与 tunnel_id)。
+参数: `-a/--auth <token>`; `-s/--server http(s)://...`(仅调试, 临时覆盖构建时写死的地址);
+`-v/--verbose` 调试日志。
 拿到 token 后客户端依次: `GET /api/me` 校验令牌+读绑定隧道 → `GET /api/tunnels/{id}` 握手取配置
 → `WS /tunnel/{id}` (Bearer) 建隧转发。隧道掉线自动指数退避重连(1s→30s);
 令牌失效(401)时客户端会明确提示重新获取。
 
-**热更新**: 在网页管理端修改本地端口/带宽后, 服务端立即经 `T_CONFIG` 帧下发,
-运行中的客户端无需重启: 新流直接用新端口, 令牌桶即时改速; 仅协议(tcp↔udp)变更会触发自动重连。
+**热更新**: 在网页管理端修改本地端口/带宽/目标主机后, 服务端立即经 `T_CONFIG` 帧下发,
+运行中的客户端无需重启: 新流直接用新配置, 令牌桶即时改速; 仅协议(tcp↔udp)变更会触发自动重连。
 
 ## API 一览 (JWT: `Authorization: Bearer <token>`)
 
@@ -166,7 +164,7 @@ python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.
 
 ## 安全说明
 
-- **仓库内无任何硬编码账号密码**: 管理员于首次启动时初始化(见上节), `.env` 与 `client/config.json` 均被 gitignore。
+- **仓库内无任何硬编码账号密码**: 管理员于首次启动时初始化(见上节), `server/.env` 被 gitignore; exe 不携带任何本地配置文件。
 - exe 客户端不再持有账号密码: 它使用网页管理端签发的 authtoken(JWT, 默认 7 天)建隧;
   `/api/login` 仍保留双通道(JSON / RSA 加密报文)供 API 侧登录 —— **都依赖 TLS**, 务必为域名配置 443。
 - 登录报文可经 RSA(2048) 公钥加密; JWT 默认 7 天有效, 密钥可经 `.env` 或自动持久化。

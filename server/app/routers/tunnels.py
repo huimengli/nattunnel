@@ -63,6 +63,7 @@ def _to_out(tunnel: Tunnel, owner_name: str) -> TunnelOut:
         name=tunnel.name or "",
         proto=tunnel.proto,
         local_port=tunnel.local_port,
+        local_target_host=tunnel.local_target_host or "127.0.0.1",
         bandwidth_kbps=tunnel.bandwidth_kbps,
         enabled=bool(tunnel.enabled),
         lan_online=online,
@@ -100,6 +101,7 @@ def create_tunnel(
         name=body.name,
         proto=body.proto,
         local_port=body.local_port,
+        local_target_host=(body.local_target_host or "127.0.0.1").strip(),
         bandwidth_kbps=body.bandwidth_kbps,
         enabled=True,
     )
@@ -132,12 +134,13 @@ async def update_tunnel(
     db.refresh(tunnel)
     # 配置热更新:
     #   协议变更 -> 所有现有流失效, 拆除房间(客户端会自动重连并拉新配置);
-    #   端口/带宽变更 -> T_CONFIG 推给在线 LAN 侧, 现有连接保持。
+    #   端口/带宽/目标主机变更 -> T_CONFIG 推给在线 LAN 侧, 现有连接保持。
     if "proto" in data and data["proto"] != proto_before:
         hub.drop(tid)
-    elif {"local_port", "bandwidth_kbps"} & data.keys():
+    elif {"local_port", "bandwidth_kbps", "local_target_host"} & data.keys():
         await push_config_to_lan(
-            hub.get(tid), tunnel.proto, tunnel.local_port, tunnel.bandwidth_kbps
+            hub.get(tid), tunnel.proto, tunnel.local_port, tunnel.bandwidth_kbps,
+            tunnel.local_target_host,
         )
     owner = db.query(User).filter_by(id=tunnel.owner_id).first()
     log.info("user '%s' updated tunnel %s: %s", user.username, tid, data)

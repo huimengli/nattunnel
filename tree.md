@@ -39,10 +39,10 @@ nattunnel/
 │
 ├── client/                      # Python 客户端(可打包 exe)
 │   ├── requirements.txt         # websockets
-│   ├── nattunnel_client.py      # 主程序: RSA登录→JWT→拉配置→TCP/UDP转发+令牌桶限流+重连
-│   ├── config.example.json      # server/tunnel_id/username/password/local_target_host
-│   ├── build.bat                # PyInstaller --onefile [--icon ..\favicon.ico] → dist\nattunnel-client.exe
-│   └── dist/                    # (构建产物) nattunnel-client.exe + config.json 同目录运行
+│   ├── nattunnel_client.py      # 主程序: JWT(绑定令牌)→从服务器拉隧道配置→TCP/UDP转发+令牌桶限流+T_CONFIG热更新+重连
+│   ├── build_config.py          # (build.bat 生成, gitignore) 构建时写死的服务器地址
+│   ├── build.bat                # [-s <server>] 写死服务器地址 + PyInstaller --onefile [--icon ..\favicon.ico]
+│   └── dist/                    # (构建产物) nattunnel-client.exe — 运行只需 -a <绑定令牌>
 │
 └── tools/                       # 测试工具(公网侧/自测/巡检)
     ├── ws_tcp_test.py           # 公网侧: stdin/stdout ↔ 隧道(TCP)
@@ -54,5 +54,5 @@ nattunnel/
 运行视图:
 
 - 服务器: `server/` 下 `python run.py` → :8000; nginx 反代 `www.xxx.com/tunnel/*`、`/api/*`
-- 内网电脑: `client\dist\nattunnel-client.exe` + `config.json`(同目录)
+- 内网电脑: `client\dist\nattunnel-client.exe -a <绑定令牌>`(无本地配置, 服务器地址构建时写死)
 - 公网测试: `tools\ws_tcp_test.py wss://www.xxx.com/tunnel/XgMacp2G`

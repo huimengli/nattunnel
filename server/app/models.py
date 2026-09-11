@@ -28,6 +28,8 @@ class Tunnel(Base):
     proto: Mapped[str] = mapped_column(String(4), default="tcp")  # tcp | udp
     # “前端端口”: 本机被转发服务监听的端口
     local_port: Mapped[int] = mapped_column(Integer)
+    # 本机目标主机: 客户端把隧道流量转发到该主机的 local_port(默认本机回环)
+    local_target_host: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
     # 带宽上限(kbps), 0 = 不限制; 由客户端执行令牌桶限流
     bandwidth_kbps: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

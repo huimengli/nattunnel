@@ -48,6 +48,26 @@ def _bootstrap_admin(db) -> User:
     return admin
 
 
+def _migrate_local_target_host() -> None:
+    """存量库幂等迁移: tunnels 表补 local_target_host 列(新建库由 create_all 处理)。"""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(
+                text(
+                    "ALTER TABLE tunnels ADD COLUMN local_target_host "
+                    "VARCHAR(255) NOT NULL DEFAULT '127.0.0.1'"
+                )
+            )
+            log.info("migration: tunnels.local_target_host column added")
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "duplicate" in msg or "1060" in msg:
+                return  # 列已存在, 正常
+            log.warning("migration check tunnels.local_target_host failed: %s", exc)
+
+
 def init_db(retries: int = 6, delay: float = 2.0) -> None:
     import time
 
@@ -55,6 +75,7 @@ def init_db(retries: int = 6, delay: float = 2.0) -> None:
     for attempt in range(1, retries + 1):
         try:
             Base.metadata.create_all(engine)
+            _migrate_local_target_host()
             _seed()
             log.info("database initialized (attempt %d)", attempt)
             return

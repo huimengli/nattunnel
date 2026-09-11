@@ -27,11 +27,11 @@
 
 - [x] 项目骨架 + 台账(progress.md / tree.md / records/)
 - [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据
-- [x] 客户端: authtoken **绑定隧道**(`-a`/控制台, 凭令牌定位隧道 config 免填 tunnel_id)→握手拉配置→TCP/UDP 转发+令牌桶限流+自动重连; 启动显示公网访问短链; T_CONFIG 热更新(端口/带宽即生效, 协议变更自动重连); `-s/--server`; build.bat(PyInstaller)
+- [x] 客户端: **无本地配置**(config.json 已废除) — 服务器地址 `build.bat -s` 构建时写死; 隧道 ID 由**绑定令牌**决定(`-a`/控制台); 端口/协议/带宽/**本地目标主机**全部运行时从服务器隧道设置读取; T_CONFIG 热更新(端口/带宽/目标主机即生效, 协议变更自动重连); build.bat(PyInstaller --onefile, -s 写死服务器 + favicon.ico 图标)
 - [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发/**客户端 exe 下载按钮**)
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
 - [x] **纯 HTTP 直转**: 浏览器可直接打开 `http(s)://域名/tunnel/<短链>[/子路径]`(tcp 隧道, HttpBridgeMiddleware); nginx map 头兼容; HTML 响应注入 `<base>` 使相对引用(含 JS fetch)落在隧道前缀
-- [x] 本机冒烟实测: selftest 19/19 PASS + api_check 12 项全 PASS (sqlite+Redis, 2026-09-11)
+- [x] 本机冒烟实测: selftest 20/20 PASS + api_check 13 项全 PASS (sqlite+Redis, 2026-09-11)
 - [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe, EXE 全链路 E2E PASS(真实回显); **图标**: 仓库根 favicon.ico 经 build.bat `--icon` 打进 exe
 - [x] 去硬编码凭据: 管理员启动时初始化(.env/随机口令+日志一次性打印) + POST /api/password; 仓库无真实账号密码, 可推 git
 - [ ] 部署到真实服务器(MySQL/Redis/nginx TLS)并改管理员密码
@@ -114,6 +114,13 @@
 - 构建前需停掉运行中的 exe(onefile 父进程锁文件); 重建后重启 XgMacp2G 与 xN5MYedx 两客户端均在线,
   llama.cpp `/health` 与下载端点(新 CL=13299500)正常。
 
+### 2026-09-11 19:49 — records/2026-09-11-19-49-36.md
+
+- **废除 config.json**: 客户端零本地配置。服务器地址 `build.bat -s <url>` 生成 `client/build_config.py`
+  随 PyInstaller 写死进 exe; 隧道 ID 只认绑定令牌; `local_target_host` 新加为**隧道字段**
+  (models/schemas/API/网页弹窗/T_CONFIG), 客户端从服务器配置读取并可热更新。
+- selftest 20/20 + api_check 13 全 PASS; 实测 PATCH local_target_host 热更新后新流即用新主机。
+
 ## 踩坑备忘(后续会话必读)
 
 1. **PyInstaller --onefile 是双进程**: `Stop-Process -Id <父>` 会留下孤儿子进程继续运行;
@@ -124,10 +131,12 @@
 4. sqlite 冒烟路径在并发 WS 风暴下会锁竞争卡死(服务器可自恢复); MySQL 生产无此问题,
    但中继仍是单 worker 内存态 — 扩容前需 Redis Pub/Sub 化。
 5. `RSA` 私钥对象无 `public_bytes`, 要 `key.public_key().public_bytes(...)`。
+6. **存量库加列**: 项目无迁移框架 — 在 `seed.py` 的 init_db 里做幂等 `ALTER TABLE`(捕获
+   duplicate column/1060 忽略); 新建库由 create_all 处理。schema 演进一律走这个模式。
 
 ## 风险 / 注意事项
 
 1. 公网侧不鉴权 → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
 2. 多 worker 会破坏内存中继; 扩缩容需先做 Redis Pub/Sub 化(未来工作)。
 3. TCP 流为“每公网连接一条”, 不支持半关细粒度之外的复杂语义(对 RDP/SSH/HTTP 足够)。
-4. 客户端不再持有任何账号密码(仅 authtoken JWT) — 分发场景只需随附 config.json + 网页签发的令牌。
+4. 客户端不再持有任何本地配置(仅 authtoken JWT; 服务器地址构建时写死, 其余全从服务器读) — 分发场景只需 exe + 网页签发的绑定令牌。

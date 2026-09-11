@@ -8,12 +8,12 @@ client/.venv/
 server/.env
 server/*.db
 *.sqlite*
-client/config.json
 
 # PyInstaller 产物
 client/dist/
 client/build/
 client/nattunnel_client.spec
+client/build_config.py   # build.bat 生成(含服务器地址), 不入库
 
 # 临时测试文件
 _tmp_*

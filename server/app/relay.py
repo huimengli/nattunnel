@@ -9,7 +9,7 @@ type 定义:
     0x03 FIN          双向               TCP 半关/流结束
     0x04 CLOSE        双向               流拆除
     0x05 HELLO        server -> 公网侧   分配 peer_id
-    0x21 CONFIG       server -> LAN      配置热更新 JSON{proto, local_port, bandwidth_kbps}
+    0x21 CONFIG       server -> LAN      配置热更新 JSON{proto, local_port, local_target_host, bandwidth_kbps}
     0x41 DATA(UDP)    双向               UDP 数据报(peer_id 定位对端)
 
 角色:
@@ -94,18 +94,25 @@ class Hub:
 hub = Hub()
 
 
-async def push_config_to_lan(room: Room | None, proto: str, local_port: int, bandwidth_kbps: int) -> bool:
+async def push_config_to_lan(
+    room: Room | None, proto: str, local_port: int, bandwidth_kbps: int, target_host: str = "127.0.0.1"
+) -> bool:
     """T_CONFIG 热更新: 把最新配置推给在线的 LAN 侧。无 LAN/发送失败返回 False。"""
     if room is None or room.lan is None:
         return False
     payload = json.dumps(
-        {"proto": proto, "local_port": int(local_port), "bandwidth_kbps": int(bandwidth_kbps)}
+        {
+            "proto": proto,
+            "local_port": int(local_port),
+            "local_target_host": target_host,
+            "bandwidth_kbps": int(bandwidth_kbps),
+        }
     ).encode("utf-8")
     try:
         await room.lan.send_bytes(make_frame(T_CONFIG, 0, payload))
         log.info(
-            "tunnel %s: config pushed to lan side (%s:%s %skbps)",
-            room.tunnel_id, proto, local_port, bandwidth_kbps,
+            "tunnel %s: config pushed to lan side (%s:%s@%s %skbps)",
+            room.tunnel_id, proto, local_port, target_host, bandwidth_kbps,
         )
         return True
     except Exception as exc:

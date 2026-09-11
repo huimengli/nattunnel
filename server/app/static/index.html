@@ -74,7 +74,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
 <div id="login-view">
   <div class="login-card">
     <h1>nattunnel 管理端</h1>
-    <p class="sub">登录后管理隧道(客户端配置)与用户。exe 客户端凭据保存在其本地 config.json。</p>
+    <p class="sub">登录后管理隧道(客户端配置)与用户。exe 客户端只需绑定令牌, 其余全从服务器读取。</p>
     <form id="login-form">
       <label>用户名</label>
       <input id="login-user" autocomplete="username" required>
@@ -105,7 +105,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
   <!-- 认证令牌(exe 客户端用, 绑定隧道) -->
   <div class="card">
     <h2>认证令牌 (exe 客户端用 · 绑定隧道)</h2>
-    <p class="muted">令牌与隧道绑定, exe 凭令牌自动确定使用哪个隧道的配置(config.json 无需再填 tunnel_id)。
+    <p class="muted">令牌与隧道绑定, exe 凭令牌自动确定使用哪个隧道的配置(端口/协议/带宽/目标主机均由服务器下发)。
       启动时 <span class="mono">-a &lt;token&gt;</span>, 或省略后在控制台粘贴。每行隧道的“令牌”按钮可直接为其签发。</p>
     <div class="row" style="margin-bottom:8px">
       <select id="token-tunnel"></select>
@@ -126,7 +126,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
     </div>
     <table id="tunnels-table">
       <thead><tr>
-        <th>短链 ID</th><th>名称</th><th>属主</th><th>协议</th><th>本地端口</th>
+        <th>短链 ID</th><th>名称</th><th>属主</th><th>协议</th><th>本地端口</th><th>本地目标</th>
         <th>带宽(kbps)</th><th>启用</th><th>exe 在线</th><th>公网连接</th><th>创建时间</th><th>操作</th>
       </tr></thead>
       <tbody></tbody>
@@ -140,8 +140,8 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       <span class="spacer"></span>
       <button id="download-client-btn" onclick="downloadClient()">&#8595; 下载客户端 exe</button>
     </div>
-    <p class="muted">把下面 JSON 存为 exe 同目录的 <span class="mono">config.json</span>(tunnel_id 不必填 — 由上方绑定令牌决定)；启动 exe：<br>
-      <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>（可选 <span class="mono">-s https://服务器地址</span>，可省略 config 里的 server）</p>
+    <p class="muted">服务器地址在<b>构建 exe 时写死</b>(client/build.bat -s), 运行时<b>无需 config.json</b>, 只需上方“认证令牌”签发的绑定令牌:<br>
+      <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>; 端口/协议/带宽/目标主机全部从该隧道的服务器设置读取(改设置经 T_CONFIG 热更新)</p>
     <pre class="snippet" id="base-snippet"></pre>
   </div>
 
@@ -169,6 +169,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       <div><label>短链 ID(8 位, 留空自动生成)</label><input id="tm-tid" maxlength="8" placeholder="自动"></div>
       <div><label>协议</label><select id="tm-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></div>
       <div><label>本地端口(前端端口)</label><input id="tm-port" type="number" min="1" max="65535"></div>
+      <div><label>本地目标主机</label><input id="tm-host" value="127.0.0.1" placeholder="127.0.0.1"></div>
       <div><label>带宽上限 kbps(0=不限)</label><input id="tm-bw" type="number" min="0" value="0"></div>
     </div>
     <div class="row">
@@ -344,6 +345,7 @@ function renderTunnels() {
       `<td>${esc(t.owner)}</td>` +
       `<td>${esc(t.proto)}</td>` +
       `<td>${esc(t.local_port)}</td>` +
+      `<td class="mono">${esc(t.local_target_host || "127.0.0.1")}</td>` +
       `<td>${bwTxt}</td>` +
       `<td><span class="badge ${t.enabled ? "on" : "off"}">${t.enabled ? "启用" : "停用"}</span></td>` +
       `<td><span class="badge ${t.lan_online ? "on" : "off"}">${t.lan_online ? "在线" : "离线"}</span></td>` +
@@ -352,11 +354,11 @@ function renderTunnels() {
       `<td><button class="sm" onclick="openTunnelModal('${esc(t.tunnel_id)}')">编辑</button> ` +
       `<button class="sm danger" onclick="deleteTunnel('${esc(t.tunnel_id)}')">删除</button> ` +
       `<button class="sm" onclick="genToken('${esc(t.tunnel_id)}')">令牌</button> ` +
-      `<button class="sm" onclick="copySnippet('${esc(t.tunnel_id)}')">客户端配置</button></td>`;
+      `<button class="sm" onclick="copySnippet('${esc(t.tunnel_id)}')">启动说明</button></td>`;
     tbody.appendChild(tr);
   }
   if (!state.tunnels.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
   }
 }
 
@@ -367,6 +369,7 @@ function openTunnelModal(tid) {
   document.getElementById("tm-tid").value = t ? t.tunnel_id : "";
   document.getElementById("tm-proto").value = t ? t.proto : "tcp";
   document.getElementById("tm-port").value = t ? t.local_port : "";
+  document.getElementById("tm-host").value = t ? (t.local_target_host || "127.0.0.1") : "127.0.0.1";
   document.getElementById("tm-bw").value = t ? t.bandwidth_kbps : 0;
   document.getElementById("tm-enabled").checked = t ? !!t.enabled : true;
   document.getElementById("tm-hint").textContent = t && (t.lan_online || t.pub_count) ? "注意: 修改将断开该隧道现有连接" : "";
@@ -378,6 +381,7 @@ async function saveTunnel() {
   const tid = document.getElementById("tm-tid").value.trim().toUpperCase();
   const proto = document.getElementById("tm-proto").value;
   const port = parseInt(document.getElementById("tm-port").value, 10);
+  const host = document.getElementById("tm-host").value.trim() || "127.0.0.1";
   const bw = Math.max(0, parseInt(document.getElementById("tm-bw").value || "0", 10));
   const enabled = document.getElementById("tm-enabled").checked;
   if (!port || port < 1 || port > 65535) return toast("本地端口必须是 1-65535", "err");
@@ -385,10 +389,10 @@ async function saveTunnel() {
   try {
     const idx = state.tunnels.findIndex(x => x.tunnel_id === tid);
     if (idx >= 0) {
-      await api("/api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, bandwidth_kbps: bw, enabled } });
+      await api("/api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, enabled } });
       toast("隧道已更新", "ok");
     } else {
-      const body = { name, proto, local_port: port, bandwidth_kbps: bw };
+      const body = { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw };
       if (tid) body.tunnel_id = tid;
       await api("/api/tunnels", { method: "POST", body });
       toast("隧道已创建", "ok");
@@ -436,17 +440,21 @@ function copyText(text, msg) {
   }
 }
 
-/* ---------------- 客户端配置片段 ---------------- */
+/* ---------------- 客户端启动说明片段 ---------------- */
 function baseSnippet(tid) {
-  return JSON.stringify({
-    server: window.location.origin,
-    local_target_host: "127.0.0.1",
-    verify_ssl: window.location.protocol === "https:",
-  }, null, 2);
+  const t = tid ? state.tunnels.find(x => x.tunnel_id === tid) : null;
+  let s = "客户端启动(无需 config.json, 服务器地址构建 exe 时已写死):\n" +
+          "  nattunnel-client.exe -a <认证令牌>";
+  if (t) {
+    s += "\n\n隧道 " + t.tunnel_id + ": " + t.proto + " -> " +
+         (t.local_target_host || "127.0.0.1") + ":" + t.local_port +
+         (t.bandwidth_kbps ? "  带宽=" + t.bandwidth_kbps + "kbps" : "  带宽=不限");
+  }
+  return s;
 }
 function renderBaseSnippet() { document.getElementById("base-snippet").textContent = baseSnippet(""); }
 async function copySnippet(tid) {
-  copyText(baseSnippet(tid), "客户端配置已复制到剪贴板");
+  copyText(baseSnippet(tid), tid ? "客户端启动说明已复制到剪贴板" : undefined);
 }
 
 /* ---------------- 用户管理(管理员) ---------------- */
