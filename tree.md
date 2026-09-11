@@ -33,7 +33,8 @@ nattunnel/
 │           ├── __init__.py
 │           ├── auth.py          # public-key / login(RSA→JWT) / me
 │           ├── users.py         # 管理员用户 CRUD(级联删隧道)
-│           └── tunnels.py       # 隧道 CRUD + lan_online/pub_count 状态
+│           ├── tunnels.py       # 隧道 CRUD + lan_online/pub_count 状态
+│           └── download.py      # /api/client/download 登录态下载 client/dist 的 exe
 │
 ├── client/                      # Python 客户端(可打包 exe)
 │   ├── requirements.txt         # websockets

@@ -449,6 +449,17 @@ async def phase_http(server: str, token: str) -> None:
         status, _, _ = await loop.run_in_executor(
             None, lambda: http_raw(server, f"/tunnel/{tid_offline}/"))
         check("D5 LAN 离线时返回 503", status == 503, str(status))
+
+        # D7: 客户端下载接口(登录态; 只校验状态与大小, 不读全量体)
+        def _dl():
+            req = urllib.request.Request(server + "/api/client/download",
+                                         headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.status, int(resp.headers.get("Content-Length") or -1)
+
+        dl_status, dl_cl = await loop.run_in_executor(None, _dl)
+        check("D7 客户端下载接口 (200 + exe 大小)",
+              dl_status == 200 and dl_cl > 1_000_000, f"{dl_status} CL={dl_cl}")
     finally:
         if client_task is not None:
             await stop_client(client_task)

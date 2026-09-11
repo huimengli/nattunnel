@@ -135,7 +135,11 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
 
   <!-- 客户端接入信息 -->
   <div class="card">
-    <h2>exe 客户端接入信息</h2>
+    <div class="row" style="margin-bottom:10px">
+      <h2>exe 客户端接入信息</h2>
+      <span class="spacer"></span>
+      <button id="download-client-btn" onclick="downloadClient()">&#8595; 下载客户端 exe</button>
+    </div>
     <p class="muted">把下面 JSON 存为 exe 同目录的 <span class="mono">config.json</span>(tunnel_id 不必填 — 由上方绑定令牌决定)；启动 exe：<br>
       <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>（可选 <span class="mono">-s https://服务器地址</span>，可省略 config 里的 server）</p>
     <pre class="snippet" id="base-snippet"></pre>
@@ -227,6 +231,39 @@ async function api(path, opts = {}) {
     throw new Error(detail);
   }
   return data;
+}
+
+/* ---------------- 客户端 exe 下载 ---------------- */
+async function downloadClient() {
+  const btn = document.getElementById("download-client-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/client/download", { headers: { Authorization: "Bearer " + state.token } });
+    if (res.status === 401 && state.token) { doLogout(true); throw new Error("登录已过期"); }
+    if (!res.ok) {
+      let detail = "HTTP " + res.status;
+      const raw = await res.text();
+      try {
+        const data = JSON.parse(raw);
+        if (data && data.detail) detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+      } catch (e) { /* 非 JSON */ }
+      throw new Error(detail);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "nattunnel-client.exe";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast("客户端下载已开始", "ok");
+  } catch (e) {
+    toast("下载失败: " + e.message, "err");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* ---------------- 弹窗 ---------------- */

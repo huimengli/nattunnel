@@ -120,6 +120,7 @@ build.bat                            # 产物 dist\nattunnel-client.exe
 | POST | `/api/login` | 二选一: `{secure_payload}`=base64(RSA(JSON)) 或 `{username,password}` (网页, 需 TLS) → JWT |
 | GET | `/api/me` | 当前用户; 令牌绑定隧道时附带 `tunnel_id` |
 | POST | `/api/auth/token` | 为当前登录账号签发 authtoken(不绑隧道, 兼容旧客户端) |
+| GET | `/api/client/download` | 登录后可下载客户端 exe(`client/dist/nattunnel-client.exe`, 未构建 → 404); 网页"exe 客户端接入信息"卡片有下载按钮 |
 | POST | `/api/tunnels/{tid}/token` | 为指定隧道签发**绑定令牌**(属主或管理员) — exe 推荐用这个 |
 | POST | `/api/password` | 修改本人密码 `{old_password, new_password(>=8位)}` |
 | GET/POST | `/api/users` | 管理员: 列/建用户 `{username,password,role?}` |

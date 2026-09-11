@@ -28,7 +28,7 @@
 - [x] 项目骨架 + 台账(progress.md / tree.md / records/)
 - [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据
 - [x] 客户端: authtoken **绑定隧道**(`-a`/控制台, 凭令牌定位隧道 config 免填 tunnel_id)→握手拉配置→TCP/UDP 转发+令牌桶限流+自动重连; 启动显示公网访问短链; T_CONFIG 热更新(端口/带宽即生效, 协议变更自动重连); `-s/--server`; build.bat(PyInstaller)
-- [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发)
+- [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发/**客户端 exe 下载按钮**)
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
 - [x] **纯 HTTP 直转**: 浏览器可直接打开 `http(s)://域名/tunnel/<短链>[/子路径]`(tcp 隧道, HttpBridgeMiddleware); nginx map 头兼容; HTML 响应注入 `<base>` 使相对引用(含 JS fetch)落在隧道前缀
 - [x] 本机冒烟实测: selftest 19/19 PASS + api_check 12 项全 PASS (sqlite+Redis, 2026-09-11)
@@ -98,6 +98,14 @@
 - selftest 新增 D6(注入 + CL 同步) → **19/19 ALL PASS**; api_check 回归 ALL PASS;
   实战: llama.cpp UI 经隧道全资源加载(页面 12669B / bundle.js 8.8MB / CSS 542KB / favicon / manifest),
   `/health` 透传 OK。
+
+### 2026-09-11 18:15 — records/2026-09-11-18-15-06.md
+
+- **网页客户端下载按钮**: 新接口 `GET /api/client/download`(登录态) 流式返回
+  `client/dist/nattunnel-client.exe`; 未构建 → 404 提示 build.bat。
+  管理端"exe 客户端接入信息"卡片加"下载客户端 exe"按钮(Blob 下载, 401 自动登出)。
+- selftest 新增 D7(200 + exe 大小) → **20/20 ALL PASS**; api_check 加下载检查 → ALL PASS;
+  实测: 带令牌 200 / CL=13341996(与磁盘一致) / `attachment` 头, 无令牌 401。
 
 ## 踩坑备忘(后续会话必读)
 

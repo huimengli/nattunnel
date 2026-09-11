@@ -32,7 +32,7 @@ from .relay import (
     make_frame,
     split_frame,
 )
-from .routers import auth, tunnels, users
+from .routers import auth, download, tunnels, users
 from .security import decode_token
 from .seed import init_db
 
@@ -59,6 +59,7 @@ app = FastAPI(title="nattunnel", version="0.1.0", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(tunnels.router)
+app.include_router(download.router)
 # /tunnel/{tid} 的纯 HTTP 直转(浏览器打开短链); WS 握手不受影响
 app.add_middleware(HttpBridgeMiddleware)
 

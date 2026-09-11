@@ -124,6 +124,13 @@ def main() -> None:
         assert e.code == 503, f"期望 503, 实际 {e.code}"
         print("[PASS] 纯 HTTP 直转(LAN 离线) -> 503")
 
+    # 客户端下载(登录态): 200 + Content-Length > 1MB (不读全量体)
+    req = urllib.request.Request(server + "/api/client/download")
+    req.add_header("Authorization", f"Bearer {tok}")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        assert resp.status == 200 and int(resp.headers.get("Content-Length") or -1) > 1_000_000
+    print("[PASS] 客户端下载接口 -> 200 (exe)")
+
     # 清理: 删隧道 + 删临时用户(管理员)
     req = urllib.request.Request(server + f"/api/tunnels/{tunnel['tunnel_id']}", method="DELETE")
     req.add_header("Authorization", f"Bearer {tok}")
