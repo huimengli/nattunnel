@@ -65,10 +65,13 @@ def resolve_jwt_secret() -> str:
         db.close()
 
 
-def create_access_token(username: str, role: str):
+def create_access_token(username: str, role: str, tunnel_id: str = None):
+    """签发 JWT; tunnel_id 非空时令牌绑定该隧道(客户端凭令牌确定隧道配置)。"""
     now = datetime.now(timezone.utc)
     expire = now + timedelta(days=JWT_EXPIRE_DAYS)
     payload = {"sub": username, "role": role, "iat": int(now.timestamp()), "exp": int(expire.timestamp())}
+    if tunnel_id:
+        payload["tunnel_id"] = tunnel_id
     token = jwt.encode(payload, resolve_jwt_secret(), algorithm=JWT_ALGORITHM)
     return token, JWT_EXPIRE_DAYS * 86400
 

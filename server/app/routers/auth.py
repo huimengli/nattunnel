@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, get_current_payload
 from ..models import User
 from ..relay import login_fail_count
 from ..schemas import LoginIn, PasswordChangeIn, TokenOut
@@ -54,8 +54,11 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)):
-    return {"username": user.username, "role": user.role, "created_at": user.created_at}
+def me(user: User = Depends(get_current_user), payload: dict = Depends(get_current_payload)):
+    out = {"username": user.username, "role": user.role, "created_at": user.created_at}
+    if payload.get("tunnel_id"):
+        out["tunnel_id"] = payload["tunnel_id"]   # 令牌绑定的隧道(客户端据此确定配置)
+    return out
 
 
 @router.post("/auth/token", response_model=TokenOut)

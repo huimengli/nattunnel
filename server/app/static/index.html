@@ -102,12 +102,14 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
 </header>
 
 <main>
-  <!-- 认证令牌(exe 客户端用) -->
+  <!-- 认证令牌(exe 客户端用, 绑定隧道) -->
   <div class="card">
-    <h2>认证令牌 (exe 客户端用)</h2>
-    <p class="muted">exe 启动必须携带 authtoken：<span class="mono">-a &lt;token&gt;</span>，或启动后在控制台粘贴。令牌有效期与 JWT 一致(默认 7 天)。</p>
+    <h2>认证令牌 (exe 客户端用 · 绑定隧道)</h2>
+    <p class="muted">令牌与隧道绑定, exe 凭令牌自动确定使用哪个隧道的配置(config.json 无需再填 tunnel_id)。
+      启动时 <span class="mono">-a &lt;token&gt;</span>, 或省略后在控制台粘贴。每行隧道的“令牌”按钮可直接为其签发。</p>
     <div class="row" style="margin-bottom:8px">
-      <button class="primary" onclick="genToken()">生成新令牌</button>
+      <select id="token-tunnel"></select>
+      <button class="primary" onclick="genToken()">生成绑定令牌</button>
       <button id="copy-token-btn" style="display:none" onclick="copyText(document.getElementById('token-pre').textContent, '令牌已复制')">复制令牌</button>
       <span class="muted" id="token-exp"></span>
     </div>
@@ -134,7 +136,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
   <!-- 客户端接入信息 -->
   <div class="card">
     <h2>exe 客户端接入信息</h2>
-    <p class="muted">把下面 JSON 存为 exe 同目录的 <span class="mono">config.json</span>；启动 exe 时用上方生成的令牌：<br>
+    <p class="muted">把下面 JSON 存为 exe 同目录的 <span class="mono">config.json</span>(tunnel_id 不必填 — 由上方绑定令牌决定)；启动 exe：<br>
       <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>（可选 <span class="mono">-s https://服务器地址</span>，可省略 config 里的 server）</p>
     <pre class="snippet" id="base-snippet"></pre>
   </div>
@@ -280,6 +282,7 @@ async function refreshAll() {
   try {
     state.tunnels = await api("/api/tunnels") || [];
     renderTunnels();
+    fillTokenSelect();
   } catch (e) { /* 401 已处理 */ }
   if (state.user && state.user.role === "admin") {
     try { state.users = await api("/api/users") || []; renderUsers(); } catch (e) {}
@@ -311,6 +314,7 @@ function renderTunnels() {
       `<td class="muted">${fmtTs(t.created_at)}</td>` +
       `<td><button class="sm" onclick="openTunnelModal('${esc(t.tunnel_id)}')">编辑</button> ` +
       `<button class="sm danger" onclick="deleteTunnel('${esc(t.tunnel_id)}')">删除</button> ` +
+      `<button class="sm" onclick="genToken('${esc(t.tunnel_id)}')">令牌</button> ` +
       `<button class="sm" onclick="copySnippet('${esc(t.tunnel_id)}')">客户端配置</button></td>`;
     tbody.appendChild(tr);
   }
@@ -362,15 +366,27 @@ async function deleteTunnel(tid) {
   catch (e) { toast(e.message, "err"); }
 }
 
-/* ---------------- 认证令牌 ---------------- */
-async function genToken() {
+/* ---------------- 认证令牌(绑定隧道) ---------------- */
+async function genToken(tid) {
+  const sel = document.getElementById("token-tunnel");
+  if (tid) sel.value = tid;
+  tid = sel.value;
+  if (!tid) { toast("请先选择隧道", "err"); return; }
   try {
-    const out = await api("/api/auth/token", { method: "POST" });
+    const out = await api("/api/tunnels/" + encodeURIComponent(tid) + "/token", { method: "POST" });
     document.getElementById("token-pre").textContent = out.access_token;
     document.getElementById("token-pre").style.display = "block";
     document.getElementById("copy-token-btn").style.display = "";
-    document.getElementById("token-exp").textContent = "有效期约 " + Math.round(out.expires_in / 86400) + " 天";
+    document.getElementById("token-exp").textContent = "隧道 " + tid + " · 有效期约 " + Math.round(out.expires_in / 86400) + " 天";
   } catch (e) { toast(e.message, "err"); }
+}
+function fillTokenSelect() {
+  const sel = document.getElementById("token-tunnel");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = state.tunnels.map(t =>
+    `<option value="${esc(t.tunnel_id)}">${esc(t.tunnel_id)}${t.name ? " · " + esc(t.name) : ""}</option>`).join("");
+  if (prev && state.tunnels.some(t => t.tunnel_id === prev)) sel.value = prev;
 }
 function copyText(text, msg) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -387,7 +403,6 @@ function copyText(text, msg) {
 function baseSnippet(tid) {
   return JSON.stringify({
     server: window.location.origin,
-    tunnel_id: tid || "(填入隧道短链 ID)",
     local_target_host: "127.0.0.1",
     verify_ssl: window.location.protocol === "https:",
   }, null, 2);

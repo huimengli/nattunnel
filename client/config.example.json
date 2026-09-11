@@ -1,6 +1,5 @@
 {
   "server": "https://www.xxx.com",
-  "tunnel_id": "XgMacp2G",
   "local_target_host": "127.0.0.1",
   "verify_ssl": true
 }

@@ -105,6 +105,14 @@ def main() -> None:
     assert tunnel["tunnel_id"] in ids
     print("[PASS] 隧道列表:", ids)
 
+    # 绑定令牌: 属主签发 -> /me 带回隧道 ID; 管理员也可签发
+    btok = http(server, f"/api/tunnels/{tunnel['tunnel_id']}/token", method="POST", token=tok2)["access_token"]
+    bme = http(server, "/api/me", token=btok)
+    assert bme.get("tunnel_id") == tunnel["tunnel_id"], f"绑定隧道不符: {bme}"
+    print("[PASS] 属主签发绑定令牌, /me 返回 tunnel_id:", bme.get("tunnel_id"))
+    http(server, f"/api/tunnels/{tunnel['tunnel_id']}/token", method="POST", token=tok)
+    print("[PASS] 管理员亦可为任意隧道签发绑定令牌")
+
     # 清理: 删隧道 + 删临时用户(管理员)
     req = urllib.request.Request(server + f"/api/tunnels/{tunnel['tunnel_id']}", method="DELETE")
     req.add_header("Authorization", f"Bearer {tok}")

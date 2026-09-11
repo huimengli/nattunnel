@@ -9,7 +9,8 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import Tunnel, User
 from ..relay import hub, lan_online, push_config_to_lan
-from ..schemas import TunnelCreate, TunnelOut, TunnelUpdate
+from ..schemas import TokenOut, TunnelCreate, TunnelOut, TunnelUpdate
+from ..security import create_access_token
 
 log = logging.getLogger("nattunnel.tunnels")
 
@@ -37,6 +38,19 @@ def _get_tunnel(db: Session, tid: str) -> Tunnel:
 def _check_access(user: User, tunnel: Tunnel) -> None:
     if user.role != "admin" and user.id != tunnel.owner_id:
         raise HTTPException(status_code=403, detail="not your tunnel")
+
+
+@router.post("/tunnels/{tid}/token", response_model=TokenOut)
+def issue_tunnel_token(tid: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """为指定隧道签发绑定令牌(属主或管理员)。
+
+    客户端凭此 token 经 GET /api/me 学到 tunnel_id, 无需在 config.json 里再写隧道 ID。
+    """
+    tunnel = _get_tunnel(db, tid)
+    _check_access(user, tunnel)
+    token, expires_in = create_access_token(user.username, user.role, tunnel_id=tid)
+    log.info("issued tunnel-bound token for '%s' on %s", user.username, tid)
+    return TokenOut(access_token=token, token_type="bearer", expires_in=expires_in)
 
 
 def _to_out(tunnel: Tunnel, owner_name: str) -> TunnelOut:

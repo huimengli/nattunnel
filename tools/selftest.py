@@ -129,13 +129,24 @@ async def wait_lan_online(server: str, tunnel_id: str, token: str, timeout: floa
     return False
 
 
-def start_client(server: str, tunnel_id: str, token: str) -> asyncio.Task:
-    """在进程内启动真实客户端代码(每阶段先复位 STOP 标志)。"""
+def start_client(server: str, tunnel_id: str, token: str, include_tid: bool = True) -> asyncio.Task:
+    """在进程内启动真实客户端代码(每阶段先复位 STOP 标志)。
+
+    include_tid=False: config 不写 tunnel_id — 客户端须完全靠令牌绑定的隧道 ID。
+    """
     client.STOP = False
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
-        json.dump({"server": server, "tunnel_id": tunnel_id}, f)
+        cfg_raw = {"server": server}
+        if include_tid:
+            cfg_raw["tunnel_id"] = tunnel_id
+        json.dump(cfg_raw, f)
         cfg_path = f.name
-    return asyncio.create_task(client.run(client.Config(Path(cfg_path)), token))
+    c = client.Config(Path(cfg_path))
+    if not include_tid:
+        # 模拟 main(): /api/me 学令牌绑定的隧道 ID, 覆盖空配置
+        info = client.verify_token(c, token)
+        client.resolve_tunnel_id(c, info)
+    return asyncio.create_task(client.run(c, token))
 
 
 async def stop_client(task: asyncio.Task) -> None:
@@ -275,6 +286,59 @@ async def phase_udp(server: str, token: str) -> None:
         echo_transport.close()
 
 
+# ------------------------------------------------------------- 阶段 C: 令牌绑定隧道
+
+async def phase_bound(server: str, token: str) -> None:
+    print(f"\n== 阶段 C: 令牌绑定隧道 ==")
+    echo, port = await start_tcp_echo()
+    tid = None
+    client_task = None
+    try:
+        out = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-bound", "proto": "tcp", "local_port": port,
+        })
+        tid = out["tunnel_id"]
+
+        tok = http_json(server, f"/api/tunnels/{tid}/token", method="POST", token=token)
+        bound = tok.get("access_token", "")
+        check("C1 签发隧道绑定令牌", bool(bound))
+
+        me = http_json(server, "/api/me", token=bound)
+        check("C2 /me 返回绑定隧道的 ID", me.get("tunnel_id") == tid, repr(me.get("tunnel_id")))
+
+        # config 不写 tunnel_id — 客户端须完全靠令牌确定隧道
+        client_task = start_client(server, tid, bound, include_tid=False)
+        online = await wait_lan_online(server, tid, token)
+        check("C3 客户端凭令牌定位正确隧道 (config 无 tunnel_id)", online)
+        if not online:
+            return
+
+        url = server.replace("http://", "ws://") + f"/tunnel/{tid}"
+        async with websockets.connect(url, max_size=1 << 20) as ws:
+            pid = None
+            while pid is None:
+                t, p, _ = split_frame(await asyncio.wait_for(ws.recv(), timeout=10))
+                if t == 0x05:
+                    pid = p
+            await ws.send(build_frame(0x02, pid, b"bound-token-probe"))
+            reply = None
+            deadline = time.time() + 8
+            while time.time() < deadline:
+                try:
+                    t, p, payload = split_frame(await asyncio.wait_for(ws.recv(), timeout=deadline - time.time()))
+                except TimeoutError:
+                    break
+                if p == pid and t == 0x02:
+                    reply = payload
+                    break
+            check("C4 TCP 往返 (绑定令牌会话)", reply == b"bound-token-probe", repr(reply))
+    finally:
+        if client_task is not None:
+            await stop_client(client_task)
+        await delete_tunnel(server, tid, token)
+        echo.close()
+
+
 # ------------------------------------------------------------- main
 
 async def main() -> None:
@@ -300,6 +364,7 @@ async def main() -> None:
 
     await phase_tcp(server, token)
     await phase_udp(server, token)
+    await phase_bound(server, token)
 
     print(f"\n结果: {len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

@@ -62,7 +62,8 @@ class Config:
     def __init__(self, path: Path):
         raw = json.loads(path.read_text(encoding="utf-8"))
         self.server = str(raw["server"]).rstrip("/")
-        self.tunnel_id = str(raw["tunnel_id"])
+        # tunnel_id 可选: 令牌绑定隧道时以令牌为准, 此处仅作旧令牌/旧配置回退
+        self.tunnel_id = str(raw.get("tunnel_id") or "")
         self.local_target_host = str(raw.get("local_target_host", "127.0.0.1"))
         self.verify_ssl = bool(raw.get("verify_ssl", True))
 
@@ -453,17 +454,21 @@ async def run(cfg: Config, token: str) -> None:
     log.info("客户端已停止")
 
 
-def acquire_token(cfg: Config, cli_token: str = None) -> str:
-    """获取有效 authtoken: 优先 --auth 参数, 否则控制台输入(可反复粘贴)。"""
+def acquire_token(cfg: Config, cli_token: str = None):
+    """获取有效 authtoken: 优先 --auth 参数, 否则控制台输入(可反复粘贴)。
+
+    返回 (token, info), info 为 /api/me 结果; 令牌绑定隧道时 info 含 tunnel_id。
+    """
     def validate(token: str):
         info = verify_token(cfg, token)  # HttpError on failure
-        log.info("令牌有效 (user=%s role=%s)", info.get("username"), info.get("role"))
-        return True
+        log.info("令牌有效 (user=%s role=%s%s)", info.get("username"), info.get("role"),
+                 f" 绑定隧道={info['tunnel_id']}" if info.get("tunnel_id") else "")
+        return info
 
     if cli_token and cli_token.strip():
         try:
-            validate(cli_token.strip())
-            return cli_token.strip()
+            info = validate(cli_token.strip())
+            return cli_token.strip(), info
         except HttpError as e:
             print(f"--auth 提供的令牌无效: {e} — 请改为控制台输入", file=sys.stderr)
 
@@ -476,10 +481,23 @@ def acquire_token(cfg: Config, cli_token: str = None) -> str:
         if not raw:
             continue
         try:
-            validate(raw)
-            return raw
+            info = validate(raw)
+            return raw, info
         except HttpError as e:
             print(f"令牌无效或已过期: {e} — 请重新输入 (Ctrl+C 退出)", file=sys.stderr)
+
+
+def resolve_tunnel_id(cfg: Config, info: dict) -> str:
+    """由 /api/me 结果确定隧道 ID: 令牌绑定优先, config.json 的 tunnel_id 仅作回退。"""
+    tid = (info.get("tunnel_id") or "").strip()
+    cfg_tid = cfg.tunnel_id.strip()
+    if tid and cfg_tid and tid != cfg_tid:
+        log.warning("令牌绑定隧道 %s, 覆盖 config.json 的 tunnel_id=%s", tid, cfg_tid)
+    tid = tid or cfg_tid
+    if not tid:
+        raise RuntimeError("无法确定隧道: 令牌未绑定隧道且 config.json 缺少 tunnel_id")
+    cfg.tunnel_id = tid
+    return tid
 
 
 def main() -> None:
@@ -519,13 +537,22 @@ def main() -> None:
         except (ValueError, OSError):
             pass
 
+    # 令牌优先: 由 /api/me 返回的 tunnel_id 确定隧道配置; config.json 的 tunnel_id 仅作回退
+    token, info = acquire_token(cfg, args.auth)
+    try:
+        tid = resolve_tunnel_id(cfg, info)
+    except RuntimeError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(2)
+
+    short_link = f"{cfg.server}/tunnel/{tid}"
     print("=" * 62)
     print("nattunnel client")
     print(f"  服务器 : {cfg.server}")
-    print(f"  隧道   : /tunnel/{cfg.tunnel_id}")
+    print(f"  隧道   : /tunnel/{tid}")
+    print(f"  公网短链: {short_link}   (公网侧 WS 入口)")
     print("=" * 62)
 
-    token = acquire_token(cfg, args.auth)
     try:
         asyncio.run(run(cfg, token))
     except KeyboardInterrupt:

@@ -59,7 +59,7 @@ python run.py                 # http://127.0.0.1:8000
 直接访问 `http(s)://www.xxx.com/`(或本机 `http://127.0.0.1:8000/`)进入管理页:
 
 - **登录**: 用户名+密码(JSON 经 TLS 传输) → JWT(存 sessionStorage);
-- **认证令牌**: 为当前账号生成 authtoken 供 exe 客户端使用(复制即用, 有效期与 JWT 一致);
+- **认证令牌(绑定隧道)**: 选择某条隧道签发携带其 ID 的 authtoken, exe 凭它定位隧道(每行隧道的“令牌”按钮可直接签发);
 - **隧道配置**: 列表(含 exe 在线状态/公网连接数)、新建/编辑(协议、本地端口、带宽、启用)/删除;
   改动即时热推给在线客户端(T_CONFIG), 无需重启 exe;
 - **客户端接入信息**: 一键复制每条隧道对应的 `config.json` 片段给 exe;
@@ -72,26 +72,31 @@ python run.py                 # http://127.0.0.1:8000
 cd client
 # 开发模式
 pip install -r requirements.txt
-copy config.example.json config.json   # 按实际改 server/tunnel_id
+copy config.example.json config.json   # 按实际改 server(tunnel_id 由绑定令牌决定, 不必填)
 python nattunnel_client.py -v
 # 打包 exe
 build.bat                            # 产物 dist\nattunnel-client.exe
 ```
 
-**启动必须提供 authtoken**(网页管理端 "认证令牌" 卡片生成), 两种途径:
+**启动必须提供 authtoken**(网页管理端对目标隧道签发), 两种途径:
 
 | 途径 | 用法 |
 |---|---|
 | 命令行 | `nattunnel-client.exe -a <token>` |
 | 控制台 | 省略 `-a` 启动, 按提示粘贴 token(可反复重输直到有效) |
 
+**令牌与隧道绑定**: 网页管理端对每条隧道签发的令牌都携带该隧道的 ID。客户端启动时
+先 `GET /api/me` 从令牌里读到绑定的 `tunnel_id`, 据此确定要转发哪个隧道的配置 ——
+**`config.json` 不再需要写 tunnel_id**(旧配置/未绑定令牌仍可回退用 config 里的值)。
+启动横幅会打印**公网访问短链** `http(s)://服务器/tunnel/<8位随机短链>`(服务端自动生成), 供公网侧接入。
+
 可选参数:
 
 - `-s/--server http(s)://公网服务器` — 覆盖 `config.json` 里的 `server`;
 - `--config <路径>` — 指定配置位置(exe 默认取同目录 `config.json`)。
 
-`config.json` 只需 `{server, tunnel_id, local_target_host?, verify_ssl?}`(不再需要账号密码)。
-拿到 token 后客户端依次: `GET /api/me` 校验令牌 → `GET /api/tunnels/{id}` 握手取配置
+`config.json` 只需 `{server, local_target_host?, verify_ssl?}`(无需账号密码与 tunnel_id)。
+拿到 token 后客户端依次: `GET /api/me` 校验令牌+读绑定隧道 → `GET /api/tunnels/{id}` 握手取配置
 → `WS /tunnel/{id}` (Bearer) 建隧转发。隧道掉线自动指数退避重连(1s→30s);
 令牌失效(401)时客户端会明确提示重新获取。
 
@@ -105,8 +110,9 @@ build.bat                            # 产物 dist\nattunnel-client.exe
 | GET | `/api/health` | 健康检查(redis 状态) |
 | GET | `/api/auth/public-key` | RSA 公钥(PEM) |
 | POST | `/api/login` | 二选一: `{secure_payload}`=base64(RSA(JSON)) 或 `{username,password}` (网页, 需 TLS) → JWT |
-| GET | `/api/me` | 当前用户 |
-| POST | `/api/auth/token` | 为当前登录账号签发新的 authtoken(exe 客户端用) |
+| GET | `/api/me` | 当前用户; 令牌绑定隧道时附带 `tunnel_id` |
+| POST | `/api/auth/token` | 为当前登录账号签发 authtoken(不绑隧道, 兼容旧客户端) |
+| POST | `/api/tunnels/{tid}/token` | 为指定隧道签发**绑定令牌**(属主或管理员) — exe 推荐用这个 |
 | POST | `/api/password` | 修改本人密码 `{old_password, new_password(>=8位)}` |
 | GET/POST | `/api/users` | 管理员: 列/建用户 `{username,password,role?}` |
 | DELETE | `/api/users/{username}` | 管理员: 删用户(级联删其隧道) |

@@ -27,7 +27,7 @@
 
 - [x] 项目骨架 + 台账(progress.md / tree.md / records/)
 - [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据
-- [x] 客户端: authtoken 认证(`-a`/控制台)→握手拉配置→TCP/UDP 转发+令牌桶限流+自动重连; T_CONFIG 热更新(端口/带宽即生效, 协议变更自动重连); `-s/--server`; build.bat(PyInstaller)
+- [x] 客户端: authtoken **绑定隧道**(`-a`/控制台, 凭令牌定位隧道 config 免填 tunnel_id)→握手拉配置→TCP/UDP 转发+令牌桶限流+自动重连; 启动显示公网访问短链; T_CONFIG 热更新(端口/带宽即生效, 协议变更自动重连); `-s/--server`; build.bat(PyInstaller)
 - [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发)
 - [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
 - [x] 本机冒烟实测: selftest 9/9 PASS + api_check 全 PASS (sqlite+Redis, 2026-09-11)
@@ -65,6 +65,14 @@
 - **网页管理端**: 新增"认证令牌"卡片(生成/复制 authtoken 供 exe 使用); 客户端接入信息片段同步更新。
 - 新接口 `POST /api/auth/token`; selftest 新增 A4/A5 热更新检查(9/9 PASS); api_check 回归 PASS;
   EXE 实测: `-a` 建隧 ✓ / stdin 粘贴建隧 ✓ / 无效令牌退出码2 ✓ / 运行中改端口即生效(E2E probe) ✓。
+
+### 2026-09-11 15:15 — records/2026-09-11-15-15-26.md
+
+- **令牌绑定隧道**: JWT 增加 `tunnel_id` 声明; 新接口 `POST /api/tunnels/{tid}/token`(属主/admin);
+  `/api/me` 回带绑定 ID。客户端凭令牌确定隧道配置(config.json 不再需要 tunnel_id, 旧配置回退兼容)。
+- 客户端启动横幅新增**公网访问短链** `{server}/tunnel/<8位随机短链>`(服务端自动生成)。
+- 网页管理端: 令牌卡片改为按隧道签发 + 每行"令牌"按钮; 接入片段去 tunnel_id。
+- selftest 新增阶段 C(C1–C4, 无 tunnel_id 配置凭令牌定位) → **13/13 PASS**; api_check 加绑定令牌检查 → ALL PASS。
 
 ## 踩坑备忘(后续会话必读)
 
