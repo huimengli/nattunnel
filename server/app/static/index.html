@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nattunnel 管理端</title>
+<style>
+:root {
+  --bg: #0f1420; --panel: #171e2e; --panel2: #1d2639; --line: #2a3550;
+  --txt: #dbe4f5; --dim: #8b98b8; --acc: #4da3ff; --ok: #3ecf8e; --warn: #ffb454; --err: #ff6b6b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--txt); font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+a { color: var(--acc); text-decoration: none; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+.mono { font-family: Consolas, monospace; }
+
+/* ---------- 登录页 ---------- */
+#login-view { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+.login-card { width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
+.login-card h1 { font-size: 20px; margin: 0 0 4px; }
+.login-card p.sub { color: var(--dim); margin: 0 0 18px; font-size: 13px; }
+
+/* ---------- 布局 ---------- */
+header.topbar { display: flex; align-items: center; gap: 12px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header.topbar .title { font-weight: 700; font-size: 15px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); display: inline-block; }
+.dot.ok { background: var(--ok); }
+.spacer { flex: 1; }
+main { padding: 18px; max-width: 1200px; margin: 0 auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.muted { color: var(--dim); font-size: 12.5px; }
+
+/* ---------- 表单 ---------- */
+label { display: block; margin-bottom: 4px; color: var(--dim); font-size: 12.5px; }
+input, select { width: 100%; background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+input:focus, select:focus { outline: none; border-color: var(--acc); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 10px 0; }
+
+/* ---------- 按钮 ---------- */
+button { background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 8px; padding: 7px 14px; cursor: pointer; font-size: 13.5px; }
+button:hover { border-color: var(--acc); }
+button.primary { background: var(--acc); border-color: var(--acc); color: #06121f; font-weight: 700; }
+button.danger:hover { border-color: var(--err); color: var(--err); }
+button.sm { padding: 4px 9px; font-size: 12.5px; }
+
+/* ---------- 表格 ---------- */
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--dim); font-size: 12.5px; font-weight: 600; }
+tr:hover td { background: rgba(77,163,255,.05); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+.badge.on { background: rgba(62,207,142,.15); color: var(--ok); }
+.badge.off { background: rgba(139,152,184,.15); color: var(--dim); }
+.badge.warn { background: rgba(255,180,84,.15); color: var(--warn); }
+
+/* ---------- 弹窗 / 提示 ---------- */
+#modal-bg { display: none; position: fixed; inset: 0; background: rgba(5,8,15,.7); z-index: 20; align-items: center; justify-content: center; }
+#modal-bg.show { display: flex; }
+.modal { width: 460px; max-width: 92vw; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+#toast { position: fixed; right: 18px; bottom: 18px; z-index: 50; display: flex; flex-direction: column; gap: 8px; }
+.toast-item { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--acc); border-radius: 8px; padding: 10px 14px; max-width: 360px; animation: fadein .2s; }
+.toast-item.err { border-left-color: var(--err); }
+.toast-item.ok { border-left-color: var(--ok); }
+@keyframes fadein { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; } }
+pre.snippet { background: #0b101a; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12.5px; overflow-x: auto; }
+details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<!-- ============ 登录视图 ============ -->
+<div id="login-view">
+  <div class="login-card">
+    <h1>nattunnel 管理端</h1>
+    <p class="sub">登录后管理隧道(客户端配置)与用户。exe 客户端凭据保存在其本地 config.json。</p>
+    <form id="login-form">
+      <label>用户名</label>
+      <input id="login-user" autocomplete="username" required>
+      <div style="height:10px"></div>
+      <label>密码</label>
+      <input id="login-pass" type="password" autocomplete="current-password" required>
+      <div class="row" style="margin-top:14px">
+        <span id="login-err" class="muted" style="color:var(--err)"></span>
+        <span class="spacer"></span>
+        <button type="submit" class="primary" id="login-btn">登 录</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ============ 主视图 ============ -->
+<div id="app-view" style="display:none">
+<header class="topbar">
+  <span class="title">nattunnel</span>
+  <span class="dot" id="health-dot"></span><span id="health-txt" class="muted">服务器…</span>
+  <span class="spacer"></span>
+  <span class="muted" id="whoami"></span>
+  <button class="sm" onclick="showModal('pw-modal')">修改密码</button>
+  <button class="sm danger" onclick="logout()">退出</button>
+</header>
+
+<main>
+  <!-- 认证令牌(exe 客户端用) -->
+  <div class="card">
+    <h2>认证令牌 (exe 客户端用)</h2>
+    <p class="muted">exe 启动必须携带 authtoken：<span class="mono">-a &lt;token&gt;</span>，或启动后在控制台粘贴。令牌有效期与 JWT 一致(默认 7 天)。</p>
+    <div class="row" style="margin-bottom:8px">
+      <button class="primary" onclick="genToken()">生成新令牌</button>
+      <button id="copy-token-btn" style="display:none" onclick="copyText(document.getElementById('token-pre').textContent, '令牌已复制')">复制令牌</button>
+      <span class="muted" id="token-exp"></span>
+    </div>
+    <pre class="snippet" id="token-pre" style="display:none;word-break:break-all"></pre>
+  </div>
+
+  <!-- 隧道列表 -->
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <h2>隧道(客户端配置)</h2>
+      <span class="muted">exe 按此表中的 协议/本地端口/带宽 工作; “在线”= exe 已连到服务器。</span>
+      <span class="spacer"></span>
+      <button class="primary" onclick="openTunnelModal(null)">+ 新建隧道</button>
+    </div>
+    <table id="tunnels-table">
+      <thead><tr>
+        <th>短链 ID</th><th>名称</th><th>属主</th><th>协议</th><th>本地端口</th>
+        <th>带宽(kbps)</th><th>启用</th><th>exe 在线</th><th>公网连接</th><th>创建时间</th><th>操作</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- 客户端接入信息 -->
+  <div class="card">
+    <h2>exe 客户端接入信息</h2>
+    <p class="muted">把下面 JSON 存为 exe 同目录的 <span class="mono">config.json</span>；启动 exe 时用上方生成的令牌：<br>
+      <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>（可选 <span class="mono">-s https://服务器地址</span>，可省略 config 里的 server）</p>
+    <pre class="snippet" id="base-snippet"></pre>
+  </div>
+
+  <!-- 用户管理(仅管理员) -->
+  <div class="card" id="users-card" style="display:none">
+    <div class="row" style="margin-bottom:10px">
+      <h2>用户管理</h2>
+      <span class="spacer"></span>
+      <button class="primary sm" onclick="showModal('user-modal')">+ 新建用户</button>
+    </div>
+    <table id="users-table">
+      <thead><tr><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+</div>
+
+<!-- ============ 弹窗: 隧道新建/编辑 ============ -->
+<div id="modal-bg">
+  <div class="modal" id="tunnel-modal">
+    <h2 id="tm-title">新建隧道</h2>
+    <div class="form-grid">
+      <div><label>名称(备注)</label><input id="tm-name"></div>
+      <div><label>短链 ID(8 位, 留空自动生成)</label><input id="tm-tid" maxlength="8" placeholder="自动"></div>
+      <div><label>协议</label><select id="tm-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></div>
+      <div><label>本地端口(前端端口)</label><input id="tm-port" type="number" min="1" max="65535"></div>
+      <div><label>带宽上限 kbps(0=不限)</label><input id="tm-bw" type="number" min="0" value="0"></div>
+    </div>
+    <div class="row">
+      <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="tm-enabled" type="checkbox" style="width:auto" checked> 启用</label>
+      <span class="muted" id="tm-hint"></span>
+      <span class="spacer"></span>
+      <button onclick="hideModal()">取消</button>
+      <button class="primary" onclick="saveTunnel()">保存</button>
+    </div>
+  </div>
+
+  <div class="modal" id="user-modal">
+    <h2>新建用户</h2>
+    <div class="form-grid">
+      <div><label>用户名(2-32 位字母数字下划线)</label><input id="um-name"></div>
+      <div><label>密码(≥6 位)</label><input id="um-pass" type="password"></div>
+      <div><label>角色</label><select id="um-role"><option value="user">user</option><option value="admin">admin</option></select></div>
+    </div>
+    <div class="row"><span class="spacer"></span><button onclick="hideModal()">取消</button><button class="primary" onclick="saveUser()">创建</button></div>
+  </div>
+
+  <div class="modal" id="pw-modal">
+    <h2>修改密码</h2>
+    <label>原密码</label><input id="pm-old" type="password">
+    <div style="height:10px"></div>
+    <label>新密码(≥8 位)</label><input id="pm-new" type="password">
+    <div class="row" style="margin-top:12px"><span class="spacer"></span><button onclick="hideModal()">取消</button><button class="primary" onclick="savePassword()">保存</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const TOKEN_KEY = "nattunnel_token";
+let state = { token: sessionStorage.getItem(TOKEN_KEY) || "", user: null, tunnels: [], users: [], isTimer: null };
+
+/* ---------------- 基础工具 ---------------- */
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function toast(msg, kind) {
+  const el = document.createElement("div");
+  el.className = "toast-item" + (kind ? " " + kind : "");
+  el.textContent = msg;
+  document.getElementById("toast").appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+async function api(path, opts = {}) {
+  const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+  if (state.token) headers["Authorization"] = "Bearer " + state.token;
+  let res;
+  try { res = await fetch(path, Object.assign({ method: opts.method || "GET", headers }, opts.body ? { body: JSON.stringify(opts.body) } : {})); }
+  catch (e) { throw new Error("网络错误: " + e.message); }
+  if (res.status === 401 && state.token) { doLogout(true); throw new Error("登录已过期"); }
+  let data = null;
+  const raw = await res.text();
+  if (raw) { try { data = JSON.parse(raw); } catch (e) { /* 非 JSON */ } }
+  if (!res.ok) {
+    let detail = "HTTP " + res.status;
+    if (data && data.detail) detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    throw new Error(detail);
+  }
+  return data;
+}
+
+/* ---------------- 弹窗 ---------------- */
+function showModal(id) {
+  document.getElementById("modal-bg").classList.add("show");
+  ["tunnel-modal", "user-modal", "pw-modal"].forEach(m => document.getElementById(m).style.display = m === id ? "block" : "none");
+}
+function hideModal() { document.getElementById("modal-bg").classList.remove("show"); }
+document.getElementById("modal-bg").addEventListener("click", e => { if (e.target.id === "modal-bg") hideModal(); });
+
+/* ---------------- 登录 / 退出 ---------------- */
+document.getElementById("login-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const btn = document.getElementById("login-btn");
+  btn.disabled = true; document.getElementById("login-err").textContent = "";
+  try {
+    const out = await api("/api/login", { method: "POST", body: {
+      username: document.getElementById("login-user").value.trim(),
+      password: document.getElementById("login-pass").value,
+    }});
+    state.token = out.access_token;
+    sessionStorage.setItem(TOKEN_KEY, state.token);
+    enterApp();
+  } catch (err) {
+    document.getElementById("login-err").textContent = err.message || "登录失败";
+  } finally { btn.disabled = false; }
+});
+function doLogout(expired) {
+  state.token = ""; sessionStorage.removeItem(TOKEN_KEY);
+  stopTimer();
+  document.getElementById("app-view").style.display = "none";
+  document.getElementById("login-view").style.display = "flex";
+  document.getElementById("login-pass").value = "";
+  if (expired) toast("登录已过期, 请重新登录", "err");
+}
+function logout() { doLogout(false); }
+
+async function enterApp() {
+  try { state.user = await api("/api/me"); } catch (e) { return; }
+  document.getElementById("login-view").style.display = "none";
+  document.getElementById("app-view").style.display = "";
+  document.getElementById("whoami").textContent = state.user.username + (state.user.role === "admin" ? "(管理员)" : "");
+  if (state.user.role !== "admin") document.getElementById("users-card").style.display = "none";
+  renderBaseSnippet();
+  refreshAll(); startTimer();
+}
+function startTimer() { stopTimer(); state.isTimer = setInterval(refreshAll, 5000); }
+function stopTimer() { if (state.isTimer) { clearInterval(state.isTimer); state.isTimer = null; } }
+
+/* ---------------- 刷新 ---------------- */
+async function refreshAll() {
+  try { await api("/api/health"); setHealth(true); } catch (e) { setHealth(false); return; }
+  try {
+    state.tunnels = await api("/api/tunnels") || [];
+    renderTunnels();
+  } catch (e) { /* 401 已处理 */ }
+  if (state.user && state.user.role === "admin") {
+    try { state.users = await api("/api/users") || []; renderUsers(); } catch (e) {}
+  }
+}
+function setHealth(ok) {
+  document.getElementById("health-dot").className = "dot" + (ok ? " ok" : "");
+  document.getElementById("health-txt").textContent = ok ? "服务器正常" : "服务器不可达";
+}
+
+/* ---------------- 隧道渲染 ---------------- */
+function fmtTs(s) { return s ? new Date(s).toLocaleString() : "-"; }
+function renderTunnels() {
+  const tbody = document.querySelector("#tunnels-table tbody");
+  tbody.innerHTML = "";
+  for (const t of state.tunnels) {
+    const tr = document.createElement("tr");
+    const bwTxt = !t.bandwidth_kbps ? "不限" : t.bandwidth_kbps;
+    tr.innerHTML =
+      `<td class="mono">${esc(t.tunnel_id)}</td>` +
+      `<td>${esc(t.name || "-")}</td>` +
+      `<td>${esc(t.owner)}</td>` +
+      `<td>${esc(t.proto)}</td>` +
+      `<td>${esc(t.local_port)}</td>` +
+      `<td>${bwTxt}</td>` +
+      `<td><span class="badge ${t.enabled ? "on" : "off"}">${t.enabled ? "启用" : "停用"}</span></td>` +
+      `<td><span class="badge ${t.lan_online ? "on" : "off"}">${t.lan_online ? "在线" : "离线"}</span></td>` +
+      `<td>${t.pub_count}</td>` +
+      `<td class="muted">${fmtTs(t.created_at)}</td>` +
+      `<td><button class="sm" onclick="openTunnelModal('${esc(t.tunnel_id)}')">编辑</button> ` +
+      `<button class="sm danger" onclick="deleteTunnel('${esc(t.tunnel_id)}')">删除</button> ` +
+      `<button class="sm" onclick="copySnippet('${esc(t.tunnel_id)}')">客户端配置</button></td>`;
+    tbody.appendChild(tr);
+  }
+  if (!state.tunnels.length) {
+    tbody.innerHTML = `<tr><td colspan="11" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
+  }
+}
+
+function openTunnelModal(tid) {
+  document.getElementById("tm-title").textContent = tid ? "编辑隧道 " + tid : "新建隧道";
+  const t = state.tunnels.find(x => x.tunnel_id === tid);
+  document.getElementById("tm-name").value = t ? (t.name || "") : "";
+  document.getElementById("tm-tid").value = t ? t.tunnel_id : "";
+  document.getElementById("tm-proto").value = t ? t.proto : "tcp";
+  document.getElementById("tm-port").value = t ? t.local_port : "";
+  document.getElementById("tm-bw").value = t ? t.bandwidth_kbps : 0;
+  document.getElementById("tm-enabled").checked = t ? !!t.enabled : true;
+  document.getElementById("tm-hint").textContent = t && (t.lan_online || t.pub_count) ? "注意: 修改将断开该隧道现有连接" : "";
+  showModal("tunnel-modal");
+}
+
+async function saveTunnel() {
+  const name = document.getElementById("tm-name").value.trim();
+  const tid = document.getElementById("tm-tid").value.trim().toUpperCase();
+  const proto = document.getElementById("tm-proto").value;
+  const port = parseInt(document.getElementById("tm-port").value, 10);
+  const bw = Math.max(0, parseInt(document.getElementById("tm-bw").value || "0", 10));
+  const enabled = document.getElementById("tm-enabled").checked;
+  if (!port || port < 1 || port > 65535) return toast("本地端口必须是 1-65535", "err");
+  if (tid && !/^[A-Z0-9]{8}$/.test(tid)) return toast("短链 ID 需为 8 位字母数字(不含 0O1lI)", "err");
+  try {
+    const idx = state.tunnels.findIndex(x => x.tunnel_id === tid);
+    if (idx >= 0) {
+      await api("/api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, bandwidth_kbps: bw, enabled } });
+      toast("隧道已更新", "ok");
+    } else {
+      const body = { name, proto, local_port: port, bandwidth_kbps: bw };
+      if (tid) body.tunnel_id = tid;
+      await api("/api/tunnels", { method: "POST", body });
+      toast("隧道已创建", "ok");
+    }
+    hideModal(); await refreshAll();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function deleteTunnel(tid) {
+  if (!confirm(`删除隧道 ${tid}? exe 将立即掉线。`)) return;
+  try { await api("/api/tunnels/" + tid, { method: "DELETE" }); toast("已删除", "ok"); await refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------------- 认证令牌 ---------------- */
+async function genToken() {
+  try {
+    const out = await api("/api/auth/token", { method: "POST" });
+    document.getElementById("token-pre").textContent = out.access_token;
+    document.getElementById("token-pre").style.display = "block";
+    document.getElementById("copy-token-btn").style.display = "";
+    document.getElementById("token-exp").textContent = "有效期约 " + Math.round(out.expires_in / 86400) + " 天";
+  } catch (e) { toast(e.message, "err"); }
+}
+function copyText(text, msg) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => toast(msg || "已复制到剪贴板", "ok"),
+      () => { window.prompt("复制以下内容:", text); }
+    );
+  } else {
+    window.prompt("复制以下内容:", text);
+  }
+}
+
+/* ---------------- 客户端配置片段 ---------------- */
+function baseSnippet(tid) {
+  return JSON.stringify({
+    server: window.location.origin,
+    tunnel_id: tid || "(填入隧道短链 ID)",
+    local_target_host: "127.0.0.1",
+    verify_ssl: window.location.protocol === "https:",
+  }, null, 2);
+}
+function renderBaseSnippet() { document.getElementById("base-snippet").textContent = baseSnippet(""); }
+async function copySnippet(tid) {
+  copyText(baseSnippet(tid), "客户端配置已复制到剪贴板");
+}
+
+/* ---------------- 用户管理(管理员) ---------------- */
+function renderUsers() {
+  const tbody = document.querySelector("#users-table tbody");
+  tbody.innerHTML = "";
+  for (const u of state.users) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="mono">${esc(u.username)}</td>` +
+      `<td>${u.role === "admin" ? '<span class="badge warn">admin</span>' : '<span class="badge off">user</span>'}</td>` +
+      `<td class="muted">${fmtTs(u.created_at)}</td>` +
+      `<td>${u.username !== state.user.username ? `<button class="sm danger" onclick="deleteUser('${esc(u.username)}')">删除</button>` : '<span class="muted">当前账号</span>'}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+async function saveUser() {
+  const body = {
+    username: document.getElementById("um-name").value.trim(),
+    password: document.getElementById("um-pass").value,
+    role: document.getElementById("um-role").value,
+  };
+  if (body.username.length < 2 || body.password.length < 6) return toast("用户名≥2位, 密码≥6位", "err");
+  try { await api("/api/users", { method: "POST", body }); toast("用户已创建", "ok"); hideModal(); await refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
+}
+async function deleteUser(username) {
+  if (!confirm(`删除用户 ${username}? 其全部隧道将一并删除。`)) return;
+  try { await api("/api/users/" + username, { method: "DELETE" }); toast("已删除", "ok"); await refreshAll(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------------- 修改密码 ---------------- */
+async function savePassword() {
+  const oldp = document.getElementById("pm-old").value;
+  const newp = document.getElementById("pm-new").value;
+  if (!oldp || newp.length < 8) return toast("新密码至少 8 位", "err");
+  try {
+    await api("/api/password", { method: "POST", body: { old_password: oldp, new_password: newp } });
+    toast("密码已修改(当前会话仍有效)", "ok"); hideModal();
+    document.getElementById("pm-old").value = ""; document.getElementById("pm-new").value = "";
+  } catch (e) { toast(e.message, "err"); }
+}
+
+/* ---------------- 启动 ---------------- */
+if (state.token) enterApp(); else doLogout(false);
+</script>
+</body>
+</html>

@@ -1,2 +1,1 @@
 websockets>=12,<18
-cryptography>=41,<45

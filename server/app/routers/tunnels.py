@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Tunnel, User
-from ..relay import hub, lan_online
+from ..relay import hub, lan_online, push_config_to_lan
 from ..schemas import TunnelCreate, TunnelOut, TunnelUpdate
 
 log = logging.getLogger("nattunnel.tunnels")
@@ -105,18 +105,26 @@ def get_tunnel(tid: str, db: Session = Depends(get_db), user: User = Depends(get
 
 
 @router.patch("/tunnels/{tid}", response_model=TunnelOut)
-def update_tunnel(
+async def update_tunnel(
     tid: str, body: TunnelUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
     tunnel = _get_tunnel(db, tid)
     _check_access(user, tunnel)
     data = body.model_dump(exclude_unset=True)
+    proto_before = tunnel.proto
     for field, value in data.items():
         setattr(tunnel, field, value)
     db.commit()
     db.refresh(tunnel)
-    # 协议变化会影响内存房间
-    hub.drop(tunnel.tunnel_id)
+    # 配置热更新:
+    #   协议变更 -> 所有现有流失效, 拆除房间(客户端会自动重连并拉新配置);
+    #   端口/带宽变更 -> T_CONFIG 推给在线 LAN 侧, 现有连接保持。
+    if "proto" in data and data["proto"] != proto_before:
+        hub.drop(tid)
+    elif {"local_port", "bandwidth_kbps"} & data.keys():
+        await push_config_to_lan(
+            hub.get(tid), tunnel.proto, tunnel.local_port, tunnel.bandwidth_kbps
+        )
     owner = db.query(User).filter_by(id=tunnel.owner_id).first()
     log.info("user '%s' updated tunnel %s: %s", user.username, tid, data)
     return _to_out(tunnel, owner.username if owner else "?")

@@ -2,21 +2,25 @@
 """
 nattunnel 客户端 — 将无公网IP电脑的本地端口经服务器隧道映射到公网。
 
+启动(authtoken 必须提供, 两种途径):
+    a) 命令行:  nattunnel-client.exe -a <token> [-s <server>]
+    b) 控制台:  启动后按提示粘贴 token(token 从网页管理端 "认证令牌" 卡片获取)
+
 流程:
-  1) GET  /api/auth/public-key          获取服务端 RSA 公钥
-  2) POST /api/login (RSA 加密报文)     RSA 握手 -> JWT 令牌
-  3) GET  /api/tunnels/{id}             拉取端口/协议/带宽配置
-  4) WS   /tunnel/{id}  (Bearer JWT)    建立隧道, 按帧协议转发 TCP/UDP
+  1) GET /api/me                  校验 authtoken(JWT)
+  2) GET /api/tunnels/{id}        握手拉取端口/协议/带宽配置
+  3) WS  /tunnel/{id} (Bearer)    建立隧道, 按帧协议转发 TCP/UDP
+  4) T_CONFIG 热更新: 服务端改配置后实时下发(端口/带宽即生效, 协议变更自动重连)
 
 帧格式(与后端一致): [type 1B][peer_id 4B BE][payload]
   0x01 NEW_STREAM(server->lan)  0x02 DATA(tcp)  0x03 FIN  0x04 CLOSE
-  0x05 HELLO(server->pub)       0x41 DATA(udp)
+  0x05 HELLO(server->pub)       0x21 CONFIG(server->lan, JSON)
+  0x41 DATA(udp)
 
 构建 exe:  build.bat (PyInstaller --onefile)
 """
 import argparse
 import asyncio
-import base64
 import json
 import logging
 import signal
@@ -38,6 +42,7 @@ T_NEW = 0x01
 T_DATA = 0x02
 T_FIN = 0x03
 T_CLOSE = 0x04
+T_CONFIG = 0x21   # server->lan: JSON{proto, local_port, bandwidth_kbps} 热更新
 U_DATA = 0x41
 
 
@@ -58,8 +63,6 @@ class Config:
         raw = json.loads(path.read_text(encoding="utf-8"))
         self.server = str(raw["server"]).rstrip("/")
         self.tunnel_id = str(raw["tunnel_id"])
-        self.username = str(raw["username"])
-        self.password = str(raw["password"])
         self.local_target_host = str(raw.get("local_target_host", "127.0.0.1"))
         self.verify_ssl = bool(raw.get("verify_ssl", True))
 
@@ -82,7 +85,7 @@ def default_config_path() -> Path:
 log = logging.getLogger("nattunnel.client")
 
 
-# ------------------------------------------------------------------ HTTP(RSA 登录)
+# ------------------------------------------------------------------ HTTP(token 校验)
 
 class HttpError(Exception):
     def __init__(self, status: int, detail: str):
@@ -116,14 +119,9 @@ def http_json(cfg: Config, path: str, method: str = "GET", body=None, token: str
         raise HttpError(e.code, detail) from None
 
 
-def login(cfg: Config) -> str:
-    """RSA 握手: 凭据用服务端公钥加密后登录, 返回 JWT。"""
-    pub_pem = http_json(cfg, "/api/auth/public-key")["public_key"]
-    key = serialization.load_pem_public_key(pub_pem.encode("ascii"))
-    payload = json.dumps({"username": cfg.username, "password": cfg.password}).encode("utf-8")
-    enc = key.encrypt(payload, rsa_padding.PKCS1v15())
-    out = http_json(cfg, "/api/login", method="POST", body={"secure_payload": base64.b64encode(enc).decode("ascii")})
-    return out["access_token"]
+def verify_token(cfg: Config, token: str) -> dict:
+    """用 Bearer token 调 /api/me 校验有效性; 返回 {username, role}。"""
+    return http_json(cfg, "/api/me", token=token.strip())
 
 
 def tunnel_config(cfg: Config, token: str) -> dict:
@@ -145,6 +143,12 @@ class TokenBucket:
         self.tokens = self.capacity
         self.last = time.monotonic()
 
+    def set_bandwidth(self, kbps: int) -> None:
+        """运行时改带宽(T_CONFIG)。"""
+        self.bps = (kbps * 1024.0 / 8.0) if kbps > 0 else 0.0
+        self.capacity = max(self.bps, 65536)
+        self.tokens = min(self.tokens, self.capacity)
+
     async def consume(self, n: int) -> None:
         if self.bps <= 0 or n <= 0:
             return
@@ -162,9 +166,22 @@ class TokenBucket:
 # ------------------------------------------------------------------ TCP 模式
 
 async def run_tcp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
-    host, port = cfg.local_target_host, int(tcfg["local_port"])
+    # live 可变配置: T_CONFIG 热更新 local_port/bandwidth; 协议变更则退出本会话重连
+    live = {"host": cfg.local_target_host, "port": int(tcfg["local_port"])}
     streams = {}      # pid -> {"writer","queue","tasks"}
     open_tasks = {}   # pid -> 正在建连的 task(用于 T_DATA 早到的竞态)
+
+    def apply_config(new: dict) -> bool:
+        """应用服务端下发的配置; 返回 True 表示协议变更需重建会话。"""
+        if "local_port" in new and int(new["local_port"]) != live["port"]:
+            log.info("本地端口热更新: %s -> %s (新流生效)", live["port"], int(new["local_port"]))
+            live["port"] = int(new["local_port"])
+        if "bandwidth_kbps" in new:
+            bucket.set_bandwidth(int(new["bandwidth_kbps"]))
+            log.info("带宽热更新: %skbps", int(new["bandwidth_kbps"]))
+        if new.get("proto") and new["proto"] != "tcp":
+            return True
+        return False
 
     async def close_stream(pid: int) -> None:
         open_tasks.pop(pid, None)
@@ -182,10 +199,11 @@ async def run_tcp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
         log.info("stream %s closed", pid)
 
     async def open_stream(pid: int) -> None:
+        port = live["port"]
         try:
-            reader, writer = await asyncio.open_connection(host, port)
+            reader, writer = await asyncio.open_connection(live["host"], port)
         except OSError as e:
-            log.error("connect %s:%s failed: %s — 通知公网端拆除流", host, port, e)
+            log.error("connect %s:%s failed: %s — 通知公网端拆除流", live["host"], port, e)
             try:
                 await ws.send(build_frame(T_CLOSE, pid))
             except Exception:
@@ -194,7 +212,7 @@ async def run_tcp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
         queue = asyncio.Queue()
         st = {"writer": writer, "queue": queue, "tasks": []}
         streams[pid] = st
-        log.info("stream %s opened -> %s:%s", pid, host, port)
+        log.info("stream %s opened -> %s:%s", pid, live["host"], port)
 
         async def pump_out():
             try:
@@ -253,6 +271,14 @@ async def run_tcp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
                 if task is not None and not task.done():
                     task.cancel()
                 await close_stream(pid)
+            elif type_ == T_CONFIG:
+                try:
+                    new = json.loads(payload.decode("utf-8"))
+                except Exception:
+                    continue
+                if apply_config(new):
+                    log.warning("协议已变更 — 重建隧道会话")
+                    break
     finally:
         for pid in list(open_tasks):
             open_tasks[pid].cancel()
@@ -291,8 +317,20 @@ class DatagramProto(asyncio.DatagramProtocol):
 
 
 async def run_udp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
-    host, port = cfg.local_target_host, int(tcfg["local_port"])
+    # live 可变配置: T_CONFIG 热更新 local_port/bandwidth; 协议变更则退出本会话重连
+    live = {"host": cfg.local_target_host, "port": int(tcfg["local_port"])}
     peers = {}  # pid -> (transport, proto, pump_task)
+
+    def apply_config(new: dict) -> bool:
+        if "local_port" in new and int(new["local_port"]) != live["port"]:
+            log.info("本地端口热更新: %s -> %s", live["port"], int(new["local_port"]))
+            live["port"] = int(new["local_port"])
+        if "bandwidth_kbps" in new:
+            bucket.set_bandwidth(int(new["bandwidth_kbps"]))
+            log.info("带宽热更新: %skbps", int(new["bandwidth_kbps"]))
+        if new.get("proto") and new["proto"] != "udp":
+            return True
+        return False
 
     async def add_peer(pid: int) -> None:
         loop = asyncio.get_running_loop()
@@ -317,7 +355,7 @@ async def run_udp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
 
         entry["task"] = asyncio.create_task(pump())
         log.info("udp peer %s bound 127.0.0.1:%s -> %s:%s",
-                 pid, proto.sockname[1] if proto.sockname else "?", host, port)
+                 pid, proto.sockname[1] if proto.sockname else "?", live["host"], live["port"])
 
     async def drop_peer(pid: int) -> None:
         entry = peers.pop(pid, None)
@@ -344,9 +382,17 @@ async def run_udp(ws, cfg: Config, tcfg: dict, bucket: TokenBucket):
                 if not payload:
                     continue
                 await bucket.consume(len(payload))
-                entry["transport"].sendto(payload, (host, port))  # sendto 是同步方法
+                entry["transport"].sendto(payload, (live["host"], live["port"]))  # sendto 是同步方法
             elif type_ == T_CLOSE:
                 await drop_peer(pid)
+            elif type_ == T_CONFIG:
+                try:
+                    new = json.loads(payload.decode("utf-8"))
+                except Exception:
+                    continue
+                if apply_config(new):
+                    log.warning("协议已变更 — 重建隧道会话")
+                    break
     finally:
         for pid in list(peers):
             await drop_peer(pid)
@@ -363,11 +409,10 @@ def _on_signal(signum, _frame):
     log.info("收到信号 %s, 准备退出...", signum)
 
 
-async def run(cfg: Config) -> None:
+async def run(cfg: Config, token: str) -> None:
     backoff = 1.0
     while not STOP:
         try:
-            token = await asyncio.to_thread(login, cfg)
             tcfg = await asyncio.to_thread(tunnel_config, cfg, token)
             bucket = TokenBucket(int(tcfg.get("bandwidth_kbps") or 0))
             proto = tcfg["proto"]
@@ -392,7 +437,7 @@ async def run(cfg: Config) -> None:
         except HttpError as e:
             log.error("HTTP 错误 %s", e)
             if e.status in (401, 403):
-                log.error("认证失败或无该隧道权限 — 检查账号/密码/tunnel_id")
+                log.error("令牌失效或无该隧道权限 — 到网页管理端重新获取令牌并重启客户端")
         except websockets.exceptions.InvalidStatus as e:
             status = getattr(e, "status_code", None) or getattr(e, "status", "?")
             log.error("WS 被拒绝: status=%s (4004=隧道不存在/已停用)", status)
@@ -408,9 +453,42 @@ async def run(cfg: Config) -> None:
     log.info("客户端已停止")
 
 
+def acquire_token(cfg: Config, cli_token: str = None) -> str:
+    """获取有效 authtoken: 优先 --auth 参数, 否则控制台输入(可反复粘贴)。"""
+    def validate(token: str):
+        info = verify_token(cfg, token)  # HttpError on failure
+        log.info("令牌有效 (user=%s role=%s)", info.get("username"), info.get("role"))
+        return True
+
+    if cli_token and cli_token.strip():
+        try:
+            validate(cli_token.strip())
+            return cli_token.strip()
+        except HttpError as e:
+            print(f"--auth 提供的令牌无效: {e} — 请改为控制台输入", file=sys.stderr)
+
+    while True:
+        try:
+            raw = input("请输入 authtoken (网页管理端 → “认证令牌” 卡片获取): ").strip()
+        except EOFError:
+            print("没有可用输入源且未提供有效令牌。请用 --auth <token> 启动, 或在交互式控制台输入。", file=sys.stderr)
+            sys.exit(2)
+        if not raw:
+            continue
+        try:
+            validate(raw)
+            return raw
+        except HttpError as e:
+            print(f"令牌无效或已过期: {e} — 请重新输入 (Ctrl+C 退出)", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="nattunnel client")
     parser.add_argument("--config", default=None, help="config.json 路径")
+    parser.add_argument("-s", "--server", default=None,
+                        help="公网服务器地址(http/https), 覆盖 config.json 中的 server")
+    parser.add_argument("-a", "--auth", default=None,
+                        help="authtoken(网页管理端获取); 省略则启动后在控制台输入")
     parser.add_argument("-v", "--verbose", action="store_true", help="调试日志")
     args = parser.parse_args()
 
@@ -428,6 +506,13 @@ def main() -> None:
         sys.exit(1)
     cfg = Config(path)
 
+    if args.server:
+        base = args.server.strip()
+        if not (base.startswith("http://") or base.startswith("https://")):
+            print("-s 需要 http(s) 地址, 例如 https://www.xxx.com", file=sys.stderr)
+            sys.exit(1)
+        cfg.server = base.rstrip("/")
+
     for s in (signal.SIGINT, signal.SIGTERM):
         try:
             signal.signal(s, _on_signal)
@@ -438,11 +523,11 @@ def main() -> None:
     print("nattunnel client")
     print(f"  服务器 : {cfg.server}")
     print(f"  隧道   : /tunnel/{cfg.tunnel_id}")
-    print(f"  账号   : {cfg.username}")
     print("=" * 62)
 
+    token = acquire_token(cfg, args.auth)
     try:
-        asyncio.run(run(cfg))
+        asyncio.run(run(cfg, token))
     except KeyboardInterrupt:
         log.info("已中断")
 

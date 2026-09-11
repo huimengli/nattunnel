@@ -9,12 +9,14 @@ type 定义:
     0x03 FIN          双向               TCP 半关/流结束
     0x04 CLOSE        双向               流拆除
     0x05 HELLO        server -> 公网侧   分配 peer_id
+    0x21 CONFIG       server -> LAN      配置热更新 JSON{proto, local_port, bandwidth_kbps}
     0x41 DATA(UDP)    双向               UDP 数据报(peer_id 定位对端)
 
 角色:
     LAN 侧  = 客户端 exe, 连接时携带有效 Bearer JWT 且是隧道属主/管理员;
     公网侧  = 其他任何连接(浏览器测试、ws 工具等), 每连接即一条流。
 """
+import json
 import logging
 
 import redis as redis_lib
@@ -28,6 +30,7 @@ T_DATA = 0x02
 T_FIN = 0x03
 T_CLOSE = 0x04
 T_HELLO = 0x05
+T_CONFIG = 0x21
 U_DATA = 0x41
 
 _redis = None
@@ -77,6 +80,10 @@ class Hub:
     def drop(self, tunnel_id: str) -> None:
         self._rooms.pop(tunnel_id, None)
 
+    def get(self, tunnel_id: str) -> Room | None:
+        """不创建房间的只读查询(用于配置推送)。"""
+        return self._rooms.get(tunnel_id)
+
     def status(self, tunnel_id: str):
         r = self._rooms.get(tunnel_id)
         if r is None:
@@ -85,6 +92,25 @@ class Hub:
 
 
 hub = Hub()
+
+
+async def push_config_to_lan(room: Room | None, proto: str, local_port: int, bandwidth_kbps: int) -> bool:
+    """T_CONFIG 热更新: 把最新配置推给在线的 LAN 侧。无 LAN/发送失败返回 False。"""
+    if room is None or room.lan is None:
+        return False
+    payload = json.dumps(
+        {"proto": proto, "local_port": int(local_port), "bandwidth_kbps": int(bandwidth_kbps)}
+    ).encode("utf-8")
+    try:
+        await room.lan.send_bytes(make_frame(T_CONFIG, 0, payload))
+        log.info(
+            "tunnel %s: config pushed to lan side (%s:%s %skbps)",
+            room.tunnel_id, proto, local_port, bandwidth_kbps,
+        )
+        return True
+    except Exception as exc:
+        log.warning("config push failed for %s: %s", room.tunnel_id, exc)
+        return False
 
 
 # ------------------------------------------------------------ Redis 辅助

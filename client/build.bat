@@ -12,11 +12,13 @@ if not exist .venv python -m venv .venv
 .venv\Scripts\python.exe -m pip install --upgrade pip
 .venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller
 
-rem pyinstaller-hooks-contrib 已自动处理 cryptography 依赖
+rem pyinstaller-hooks-contrib 已自动处理依赖
 .venv\Scripts\pyinstaller.exe --noconfirm --onefile --console ^
   --name nattunnel-client ^
   nattunnel_client.py
 
 echo.
 echo 构建完成: dist\nattunnel-client.exe
-echo 使用方法: 将 config.json(参考 config.example.json)与 exe 放同一目录后运行
+echo 使用方法: 将 config.json(参考 config.example.json)与 exe 放同一目录, 然后运行
+echo   nattunnel-client.exe -a ^<authtoken^> [-s http(s)://公网服务器]
+echo  authtoken 在网页管理端 "认证令牌" 卡片生成(也可省略 -a 启动后在控制台输入)

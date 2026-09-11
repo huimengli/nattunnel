@@ -6,8 +6,13 @@ from pydantic import BaseModel, Field
 
 
 class LoginIn(BaseModel):
-    # base64(RSA-公钥加密(JSON{"username","password"}))
-    secure_payload: str = Field(..., min_length=1, max_length=2048)
+    """两种登录形式(二选一):
+    1) secure_payload: base64(RSA 公钥加密(JSON{username,password})) — exe 客户端;
+    2) username + password: 直接传输 — 网页管理端(必须经 TLS)。
+    """
+    secure_payload: Optional[str] = Field(default=None, min_length=1, max_length=2048)
+    username: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    password: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 class TokenOut(BaseModel):

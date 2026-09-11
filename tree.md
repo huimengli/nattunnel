@@ -35,7 +35,7 @@ nattunnel/
 │           └── tunnels.py       # 隧道 CRUD + lan_online/pub_count 状态
 │
 ├── client/                      # Python 客户端(可打包 exe)
-│   ├── requirements.txt         # websockets + cryptography
+│   ├── requirements.txt         # websockets
 │   ├── nattunnel_client.py      # 主程序: RSA登录→JWT→拉配置→TCP/UDP转发+令牌桶限流+重连
 │   ├── config.example.json      # server/tunnel_id/username/password/local_target_host
 │   ├── build.bat                # PyInstaller --onefile → dist\nattunnel-client.exe

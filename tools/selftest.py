@@ -129,13 +129,13 @@ async def wait_lan_online(server: str, tunnel_id: str, token: str, timeout: floa
     return False
 
 
-def start_client(server: str, tunnel_id: str, user: str, password: str) -> asyncio.Task:
+def start_client(server: str, tunnel_id: str, token: str) -> asyncio.Task:
     """在进程内启动真实客户端代码(每阶段先复位 STOP 标志)。"""
     client.STOP = False
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
-        json.dump({"server": server, "tunnel_id": tunnel_id, "username": user, "password": password}, f)
+        json.dump({"server": server, "tunnel_id": tunnel_id}, f)
         cfg_path = f.name
-    return asyncio.create_task(client.run(client.Config(Path(cfg_path))))
+    return asyncio.create_task(client.run(client.Config(Path(cfg_path)), token))
 
 
 async def stop_client(task: asyncio.Task) -> None:
@@ -148,8 +148,8 @@ async def stop_client(task: asyncio.Task) -> None:
 
 # ------------------------------------------------------------- 各阶段
 
-async def phase_tcp(server: str, token: str, user: str, password: str) -> None:
-    print(f"\n== 阶段 A: TCP 隧道往返 ==")
+async def phase_tcp(server: str, token: str) -> None:
+    print(f"\n== 阶段 A: TCP 隧道往返 + 配置热更新 ==")
     echo_server, port = await start_tcp_echo()
     tid = None
     client_task = None
@@ -158,7 +158,7 @@ async def phase_tcp(server: str, token: str, user: str, password: str) -> None:
             "name": "selftest-tcp", "proto": "tcp", "local_port": port,
         })
         tid = out["tunnel_id"]
-        client_task = start_client(server, tid, user, password)
+        client_task = start_client(server, tid, token)
 
         online = await wait_lan_online(server, tid, token)
         check("A1 客户端 lan 侧上线", online)
@@ -190,15 +190,48 @@ async def phase_tcp(server: str, token: str, user: str, password: str) -> None:
             # 公网侧关闭流 -> lan 客户端应拆除本地连接(不崩即可)
             await ws.send(build_frame(0x04, pid))
             await asyncio.sleep(0.5)
+
+        # --- A4/A5: 热更新 — API 改 local_port(客户端不重启), 新公网连接应转发到新端口。
+        #     先关掉旧 echo: 若客户端未应用 T_CONFIG, 连旧端口会失败 -> A5 必然失败。
+        echo_server.close()
+        echo2, port2 = await start_tcp_echo()
+        try:
+            http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"local_port": port2})
+            await asyncio.sleep(0.5)  # 等客户端应用 T_CONFIG
+            check("A4 API 已把 local_port 改为 %d" % port2, True)
+            async with websockets.connect(url, max_size=1 << 20) as ws2:
+                pid2 = None
+                while pid2 is None:
+                    t, p, _ = split_frame(await asyncio.wait_for(ws2.recv(), timeout=10))
+                    if t == 0x05:
+                        pid2 = p
+                await ws2.send(build_frame(0x02, pid2, b"live-update-probe"))
+                reply2 = None
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    try:
+                        t, p, payload = split_frame(await asyncio.wait_for(ws2.recv(), timeout=deadline - time.time()))
+                    except TimeoutError:
+                        break
+                    if p == pid2 and t == 0x02:
+                        reply2 = payload
+                        break
+                check("A5 热更新后转发到新端口 (echo)", reply2 == b"live-update-probe", repr(reply2))
+        finally:
+            echo2.close()
+            await asyncio.sleep(0)
     finally:
         if client_task is not None:
             await stop_client(client_task)
         await delete_tunnel(server, tid, token)
-        echo_server.close()
+        try:
+            echo_server.close()
+        except Exception:
+            pass
         await echo_server.wait_closed()
 
 
-async def phase_udp(server: str, token: str, user: str, password: str) -> None:
+async def phase_udp(server: str, token: str) -> None:
     print(f"\n== 阶段 B: UDP 隧道往返 ==")
     echo_transport, port = await start_udp_echo()
     tid = None
@@ -208,7 +241,7 @@ async def phase_udp(server: str, token: str, user: str, password: str) -> None:
             "name": "selftest-udp", "proto": "udp", "local_port": port,
         })
         tid = out["tunnel_id"]
-        client_task = start_client(server, tid, user, password)
+        client_task = start_client(server, tid, token)
 
         online = await wait_lan_online(server, tid, token)
         check("B1 客户端 lan 侧上线", online)
@@ -265,8 +298,8 @@ async def main() -> None:
     token = login(server, args.user, args.password)
     check("01 RSA 登录获取 JWT", bool(token))
 
-    await phase_tcp(server, token, args.user, args.password)
-    await phase_udp(server, token, args.user, args.password)
+    await phase_tcp(server, token)
+    await phase_udp(server, token)
 
     print(f"\n结果: {len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

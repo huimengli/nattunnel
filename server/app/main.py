@@ -6,8 +6,10 @@
 """
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 
 from .config import WS_MAX_SIZE
 from .database import SessionLocal
@@ -200,6 +202,12 @@ async def tunnel_ws(tid: str, websocket: WebSocket):
                 get_redis().delete(lan_present_key(tid))
             except Exception:
                 pass
+
+
+# 网页管理端(静态页, 浏览器登录 + 隧道/用户配置)。
+# 放在所有 API/WS 路由之后挂载 => 接口与 /tunnel 优先匹配, 静态页兜底。
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="webui")
 
 
 if __name__ == "__main__":

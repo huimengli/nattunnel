@@ -12,8 +12,9 @@
    |                            |        MySQL(用户/隧道)  Redis(在线状态/限流计数)
 ```
 
-- **客户端** `client/nattunnel_client.py`(可打包 exe): RSA 握手登录拿 JWT → 拉取隧道配置
-  (前端端口 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`。
+- **客户端** `client/nattunnel_client.py`(可打包 exe): 携带 authtoken(JWT, `-a` 参数或控制台输入)
+  → 握手拉取隧道配置(前端端口 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`;
+  服务端改配置后经 `T_CONFIG` 帧**热更新**(端口/带宽即生效, 协议变更自动重连)。
 - **后端** `server/`: FastAPI + MySQL(SQLAlchemy) + Redis, JWT 鉴权, RSA 公钥下发, `/tunnel/{id}` WebSocket 中继。
 - **公网侧**无需装任何东西: 任何支持 WS 的二进制客户端连 `wss://www.xxx.com/tunnel/<ID>` 即可;
   仓库自带测试工具 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py`。
@@ -50,7 +51,20 @@ python run.py                 # http://127.0.0.1:8000
 ## nginx(服务器)
 
 把 `server/nginx/nattunnel.conf` 放入 `/etc/nginx/conf.d/`, 有证书则启用 443 块,
-然后 `nginx -t && nginx -s reload`。关键点是 `/tunnel/` 的 Upgrade 头与长超时。
+然后 `nginx -t && nginx -s reload`。关键点是 `/tunnel/` 的 Upgrade 头与长超时;
+`location /` 反代网页管理端。
+
+## 网页管理端(浏览器)
+
+直接访问 `http(s)://www.xxx.com/`(或本机 `http://127.0.0.1:8000/`)进入管理页:
+
+- **登录**: 用户名+密码(JSON 经 TLS 传输) → JWT(存 sessionStorage);
+- **认证令牌**: 为当前账号生成 authtoken 供 exe 客户端使用(复制即用, 有效期与 JWT 一致);
+- **隧道配置**: 列表(含 exe 在线状态/公网连接数)、新建/编辑(协议、本地端口、带宽、启用)/删除;
+  改动即时热推给在线客户端(T_CONFIG), 无需重启 exe;
+- **客户端接入信息**: 一键复制每条隧道对应的 `config.json` 片段给 exe;
+- **用户管理**(仅管理员): 建/删用户; **修改密码**: 本人在线改密。
+- 页面每 5 秒自动刷新状态; 单文件无构建依赖(`server/app/static/index.html`)。
 
 ## 客户端(内网电脑)
 
@@ -58,13 +72,31 @@ python run.py                 # http://127.0.0.1:8000
 cd client
 # 开发模式
 pip install -r requirements.txt
-copy config.example.json config.json   # 按实际改 server/tunnel_id/账号
+copy config.example.json config.json   # 按实际改 server/tunnel_id
 python nattunnel_client.py -v
 # 打包 exe
 build.bat                            # 产物 dist\nattunnel-client.exe
 ```
 
-exe 与 `config.json` 放同一目录即可运行; 隧道掉线自动指数退避重连(1s→30s)。
+**启动必须提供 authtoken**(网页管理端 "认证令牌" 卡片生成), 两种途径:
+
+| 途径 | 用法 |
+|---|---|
+| 命令行 | `nattunnel-client.exe -a <token>` |
+| 控制台 | 省略 `-a` 启动, 按提示粘贴 token(可反复重输直到有效) |
+
+可选参数:
+
+- `-s/--server http(s)://公网服务器` — 覆盖 `config.json` 里的 `server`;
+- `--config <路径>` — 指定配置位置(exe 默认取同目录 `config.json`)。
+
+`config.json` 只需 `{server, tunnel_id, local_target_host?, verify_ssl?}`(不再需要账号密码)。
+拿到 token 后客户端依次: `GET /api/me` 校验令牌 → `GET /api/tunnels/{id}` 握手取配置
+→ `WS /tunnel/{id}` (Bearer) 建隧转发。隧道掉线自动指数退避重连(1s→30s);
+令牌失效(401)时客户端会明确提示重新获取。
+
+**热更新**: 在网页管理端修改本地端口/带宽后, 服务端立即经 `T_CONFIG` 帧下发,
+运行中的客户端无需重启: 新流直接用新端口, 令牌桶即时改速; 仅协议(tcp↔udp)变更会触发自动重连。
 
 ## API 一览 (JWT: `Authorization: Bearer <token>`)
 
@@ -72,8 +104,9 @@ exe 与 `config.json` 放同一目录即可运行; 隧道掉线自动指数退�
 |---|---|---|
 | GET | `/api/health` | 健康检查(redis 状态) |
 | GET | `/api/auth/public-key` | RSA 公钥(PEM) |
-| POST | `/api/login` | `{secure_payload}` = base64(RSA(JSON{username,password})) → JWT |
+| POST | `/api/login` | 二选一: `{secure_payload}`=base64(RSA(JSON)) 或 `{username,password}` (网页, 需 TLS) → JWT |
 | GET | `/api/me` | 当前用户 |
+| POST | `/api/auth/token` | 为当前登录账号签发新的 authtoken(exe 客户端用) |
 | POST | `/api/password` | 修改本人密码 `{old_password, new_password(>=8位)}` |
 | GET/POST | `/api/users` | 管理员: 列/建用户 `{username,password,role?}` |
 | DELETE | `/api/users/{username}` | 管理员: 删用户(级联删其隧道) |
@@ -91,6 +124,7 @@ exe 与 `config.json` 放同一目录即可运行; 隧道掉线自动指数退�
 | `0x03` FIN | 流结束(半关) |
 | `0x04` CLOSE | 流拆除 |
 | `0x05` HELLO | server→公网侧: 分配 peer_id |
+| `0x21` CONFIG | server→LAN: 配置热更新 JSON `{proto, local_port, bandwidth_kbps}` |
 | `0x41` DATA(UDP) | UDP 数据报(双向, 按 pid 路由) |
 
 - TCP: 每个公网 WS 连接 = 一条流; LAN 侧收到 NEW_STREAM 后 connect `<local_target_host>:<local_port>`。
@@ -116,6 +150,8 @@ python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.
 ## 安全说明
 
 - **仓库内无任何硬编码账号密码**: 管理员于首次启动时初始化(见上节), `.env` 与 `client/config.json` 均被 gitignore。
-- 登录报文经 RSA(2048) 公钥加密; JWT 默认 7 天有效, 密钥可经 `.env` 或自动持久化。
+- exe 客户端不再持有账号密码: 它使用网页管理端签发的 authtoken(JWT, 默认 7 天)建隧;
+  `/api/login` 仍保留双通道(JSON / RSA 加密报文)供 API 侧登录 —— **都依赖 TLS**, 务必为域名配置 443。
+- 登录报文可经 RSA(2048) 公钥加密; JWT 默认 7 天有效, 密钥可经 `.env` 或自动持久化。
 - 公网侧入口本身不鉴权 —— **务必为 `www.xxx.com` 配置 TLS(443)**, 否则数据明文过网。
 - 隧道 8 位短链可被猜到: 敏感业务请配合服务器防火墙限制源 IP, 或定期轮换 `tunnel_id`。
