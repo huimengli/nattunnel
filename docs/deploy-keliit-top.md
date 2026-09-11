@@ -30,7 +30,7 @@ python3 -m venv .venv                    # 需要 Python >= 3.10
 .venv/bin/pip install -r requirements.txt   # 大陆服务器可先配 pip 镜像源
 ```
 
-## 3. 配置 .env（首次启动）
+## 3. 配置 .env
 
 ```bash
 cd /opt/nattunnel/server
@@ -39,12 +39,27 @@ cat > .env <<EOF
 DATABASE_URL=sqlite:///./nattunnel.db
 REDIS_URL=redis://127.0.0.1:6379/0      # 没装 Redis 可留空, 服务自动降级(内存兜底)
 JWT_SECRET=$(openssl rand -hex 32)
-INITIAL_ADMIN_USERNAME=admin
-# INITIAL_ADMIN_PASSWORD 留空 => 首启生成随机密码并打印到启动日志(推荐, 登完立即改密)
 EOF
 ```
 
-## 4. systemd 服务（单 worker！中继状态在进程内存）
+> **管理员账号在首次启动时于控制台交互创建**(见第 4 步), `.env` 不再需要 INITIAL_ADMIN_*。
+> `INITIAL_ADMIN_USERNAME/INITIAL_ADMIN_PASSWORD` 仅用于**非交互**场景(systemd/docker 无终端)。
+
+## 4. 首次启动（终端交互创建管理员）+ systemd 服务
+
+**先手动在终端跑一次**（此时数据库里还没有管理员, 控制台会引导输入）：
+
+```bash
+cd /opt/nattunnel/server
+.venv/bin/python run.py            # 8000 被其他站占用时: .venv/bin/python run.py --port 9000
+# => 首次启动提示:
+#    管理员用户名 [默认 admin]: _
+#    管理员密码(至少 8 位, 隐藏输入): _
+#    请再次输入管理员密码: _
+# 创建成功后进入 "Application startup complete"; Ctrl+C 退出
+```
+
+**再交给 systemd**（单 worker！中继状态在进程内存）：
 
 `/etc/systemd/system/nattunnel.service`：
 
@@ -56,6 +71,7 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/nattunnel/server
 ExecStart=/opt/nattunnel/server/.venv/bin/python run.py
+# 若手动启动用了 --port 9000, 这里同步加 --port 9000(nginx proxy_pass 也要对应)
 Restart=always
 RestartSec=3
 
@@ -66,8 +82,7 @@ WantedBy=multi-user.target
 ```bash
 systemctl daemon-reload
 systemctl enable --now nattunnel
-journalctl -u nattunnel -f     # 看到 "Application startup complete" 即就绪;
-                                # 首次启动日志会打印初始管理员随机密码
+journalctl -u nattunnel -f     # 看到 "Application startup complete" 即就绪
 ```
 
 > HOST 默认只绑 `127.0.0.1`（混部安全）；**不要**在防火墙放通 8000 端口。
@@ -93,7 +108,7 @@ journalctl -u nattunnel -f     # 看到 "Application startup complete" 即就绪
 curl -s https://www.keliit.top/nattunnel-admin/api/health   # => {"ok":true,...}
 ```
 
-1. 浏览器开 `https://www.keliit.top/nattunnel-admin/` → admin + 日志里的密码登录
+1. 浏览器开 `https://www.keliit.top/nattunnel-admin/` → 用第 4 步控制台设置的账号密码登录
 2. 建隧道（本地目标主机填局域网内机器的 IP/域名，如 llama.cpp 所在主机的地址）
 3. "签发客户端令牌" 得到绑定令牌
 4. 局域网 PC 运行 `nattunnel-client.exe -a <令牌>` → 管理面板该隧道显示在线
@@ -113,3 +128,32 @@ docker compose up -d mysql        # 仓库根 docker-compose.yml, 建 nattunnel 
 # .env: DATABASE_URL=mysql+pymysql://nattunnel:nattunnel@127.0.0.1:3306/nattunnel?charset=utf8mb4
 systemctl restart nattunnel        # 首启自动建表(含存量列幂等迁移)
 ```
+
+## 9. 故障排查
+
+### `Access denied for user 'nattunnel'@'localhost' (using password: YES)`
+
+两种根因, 按序检查：
+
+1. **`.env` 里 DATABASE_URL 的密码与 MySQL 实际用户密码不一致** — 两者必须一字不差。
+2. **用户主机范围坑**: DSN 经 TCP 连 `127.0.0.1`, MySQL 的用户匹配的是 `'nattunnel'@'127.0.0.1'`
+   或 `'nattunnel'@'%'`; 只建了 `'nattunnel'@'localhost'`(仅 unix socket) 时 TCP 连接会被拒。
+
+一键修复 SQL（root 登录执行, `<你的密码>` 换成与 `.env` 一致的值）：
+
+```sql
+CREATE DATABASE IF NOT EXISTS nattunnel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'nattunnel'@'127.0.0.1' IDENTIFIED BY '<你的密码>';
+CREATE USER IF NOT EXISTS 'nattunnel'@'localhost'  IDENTIFIED BY '<你的密码>';
+GRANT ALL PRIVILEGES ON nattunnel.* TO 'nattunnel'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON nattunnel.* TO 'nattunnel'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### 其他
+
+- **端口**: `python run.py --port 9000` 只在 CLI/systemd 里生效; nginx 两处 `proxy_pass`
+  必须指向同一端口, 防火墙不放通该端口。
+- **启动卡在重试 db init**: 上面 MySQL 问题的表现(每 2s 重试 6 次后退出); 或 Redis/DB 容器未起。
+- **首启没出现管理员创建提示**: stdin 不是终端(如 systemd 直接拉起) — 属正常降级为
+  `.env INITIAL_ADMIN_PASSWORD`/随机+日志打印; 想交互创建就手动在终端先跑一次。

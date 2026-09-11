@@ -18,7 +18,7 @@
 
 | 项 | 值 |
 |---|---|
-| 管理员 | 首次启动初始化: `.env` 的 `INITIAL_ADMIN_USERNAME`(默认 admin)/`INITIAL_ADMIN_PASSWORD`(留空则随机生成+日志一次性打印), 登录后 POST /api/password 修改; 代码与文档无硬编码凭据 |
+| 管理员 | 首次启动创建: **交互终端** `python run.py` 时控制台引导输入用户名/密码(隐藏+二次确认); 非交互(systemd/docker)回退 `.env INITIAL_ADMIN_PASSWORD` 或随机生成+日志一次性打印; 登录后 POST /api/password 可改密; 代码与文档无硬编码凭据 |
 | 示例隧道 | XgMacp2G (tcp, 3389, 不限速) |
 | 后端默认地址 | http://127.0.0.1:8000 (server/ 目录 `python run.py`) |
 | MySQL/Redis | server/docker-compose.yml 一键起 |
@@ -140,6 +140,15 @@
 - `docs/deploy-keliit-top.md`: 上传(保仓库根布局)/venv/.env(首启 sqlite+Redis 可缺降级)/systemd 单 worker/nginx 嵌入/验证清单/安全注意。
 - 验证: 子路径模拟代理下管理页+登录+隧道列表全通; 服务器重启后两客户端自动重连; api_check 13 项 ALL PASS。
 - **待办**: keliit.top 服务器上按 docs/deploy-keliit-top.md 执行(本机无该服务器 SSH; 需用户提供或自行执行)。
+
+### 2026-09-11 21:17 — records/2026-09-11-21-17-16.md
+
+- **首启交互式创建管理员**: seed.py 检测无 admin 时 — 交互终端(pty)控制台引导输入用户名/密码
+  (getpass 隐藏+二次确认, EOF/Ctrl+C 干净退出); 非交互(systemd/docker)回退 .env/随机+日志一次性打印。
+- **run.py 加 `--host/--port`**: 用户的 `python run.py --port 9000` 生效(原先被静默忽略)。
+- **部署排障(MySQL 1045)**: deploy 文档新增 §9 — 密码不一致 or 用户主机范围坑(TCP 连 127.0.0.1 需
+  `@'127.0.0.1'`/`@'%'`, 仅 `@'localhost'` 会拒), 附一键修复 SQL。
+- .env.example/README 同步(交互优先, HOST 默认回环); 交互/非交互两路径均实测 PASS; api_check 13 项 ALL PASS。
 
 ## 踩坑备忘(后续会话必读)
 

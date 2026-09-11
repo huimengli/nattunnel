@@ -45,14 +45,16 @@
 cd server
 # 1) 依赖库(MySQL/Redis), 二选一:
 docker compose up -d
-#    或自行安装并保证 .env 中连接串正确
-# 2) 配置(.env 不入库; 生产环境建议显式设置 INITIAL_ADMIN_PASSWORD)
-cp .env.example .env          # 按需修改
+#    或自行安装并保证 .env 中连接串正确(也可先 sqlite:///./nattunnel.db 起步)
+# 2) 配置(.env 不入库; 按需修改 DATABASE_URL/JWT_SECRET)
+cp .env.example .env
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-# 3) 启动(必须单 worker; 在 server/ 目录下)
-python run.py                 # http://127.0.0.1:8000
-# 4) 首次启动后: 用 .env/日志中的账号登录, 调用 POST /api/password 修改密码
+# 3) 首次启动(必须单 worker; 在 server/ 目录下, **终端里直接运行**):
+python run.py                 # http://127.0.0.1:8000  (端口占用可 --port 9000)
+#    => 检测到尚无管理员时, 控制台引导输入用户名/密码(隐藏输入, 需二次确认)
+#    => 非交互场景(systemd/docker)则回退 .env INITIAL_ADMIN_PASSWORD 或随机+日志一次性打印
+# 4) 稳定后交给 systemd 常驻(单 worker), 详见 docs/deploy-keliit-top.md(混部子路径部署)
 ```
 
 ## nginx(服务器)
