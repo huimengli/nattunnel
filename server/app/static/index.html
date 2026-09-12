@@ -139,6 +139,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       <h2>exe 客户端接入信息</h2>
       <span class="spacer"></span>
       <button id="download-client-btn" onclick="downloadClient()">&#8595; 下载客户端 exe</button>
+      <a class="muted" href="nattunnel-client.exe" title="静态资产直链(打包时自动同步到 server/app/static; 两条通道内容一致)">&nbsp;|&nbsp; 静态直链下载</a>
     </div>
     <p class="muted">服务器地址在<b>构建 exe 时写死</b>(client/build.bat -s), 运行时<b>无需 config.json</b>, 只需上方“认证令牌”签发的绑定令牌:<br>
       <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>; 端口/协议/带宽/目标主机全部从该隧道的服务器设置读取(改设置经 T_CONFIG 热更新)</p>

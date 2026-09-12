@@ -135,14 +135,33 @@ def http_json(cfg: Config, path: str, method: str = "GET", body=None, token: str
         raise HttpError(e.code, detail) from None
 
 
+# REST API 路径前缀 — 独占域名部署为 /api; 混部子路径部署在管理端前缀下
+# (见 server/nginx/nattunnel-embed.conf)。按序尝试, 以首个非 404/405 响应为准。
+API_BASES = ("/api", "/nattunnel-admin/api")
+
+
+def api_json(cfg: Config, path: str, method: str = "GET", body=None, token: str = None) -> dict:
+    """带 API 前缀回退的 REST 调用; 401 等业务状态码直接抛出, 只有 404/405 换前缀重试。"""
+    last_exc = None
+    for base in API_BASES:
+        try:
+            return http_json(cfg, base + path, method=method, body=body, token=token)
+        except HttpError as e:
+            if e.status in (404, 405):
+                last_exc = e
+                continue
+            raise
+    raise last_exc
+
+
 def verify_token(cfg: Config, token: str) -> dict:
     """用 Bearer token 调 /api/me 校验有效性; 返回 {username, role}。"""
-    return http_json(cfg, "/api/me", token=token.strip())
+    return api_json(cfg, "/me", token=token.strip())
 
 
 def tunnel_config(cfg: Config, tid: str, token: str) -> dict:
     """握手拉取隧道配置; 返回与 T_CONFIG 帧同构的字段集合。"""
-    out = http_json(cfg, f"/api/tunnels/{tid}", token=token)
+    out = api_json(cfg, f"/tunnels/{tid}", token=token)
     for field in ("proto", "local_port"):
         if field not in out:
             raise RuntimeError(f"tunnel config missing '{field}'")

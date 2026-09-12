@@ -15,9 +15,9 @@ www.keliit.top 现有 vhost 已跑着其他站点（443/TLS 已就绪）。nattu
 
 ```bash
 mkdir -p /opt/nattunnel
-# 把整个仓库(或至少 server/ 与 client/dist/)放到 /opt/nattunnel/ 下:
-#   /opt/nattunnel/server/          后端
-#   /opt/nattunnel/client/dist/nattunnel-client.exe   供管理端"下载 exe"按钮
+# 只需上传 server/ 树即可(client/ 仅构建 exe 用, 服务器上不再需要):
+#   /opt/nattunnel/server/          后端(其中 app/static/nattunnel-client.exe 即客户端 exe 唯一副本,
+#                                   两条下载通道都读它; build.bat 构建后自动同步)
 ```
 
 > 不要上传 `server/.env`、`server/local.db`（本地测试数据，gitignore 里已排除）。
@@ -118,8 +118,11 @@ curl -s https://www.keliit.top/nattunnel-admin/api/health   # => {"ok":true,...}
 2. 建隧道（本地目标主机填局域网内机器的 IP/域名，如 llama.cpp 所在主机的地址）
 3. "签发客户端令牌" 得到绑定令牌
 4. 局域网 PC 运行 `nattunnel-client.exe -a <令牌>` → 管理面板该隧道显示在线
+   > **exe 必须是 2026-09-12 之后的构建**: 旧构建缺 cryptography 依赖(启动即崩),
+   > 且不带 API 前缀回退(混部下握手 404)。若走"下载 exe"按钮分发,
+    > (build.bat 构建后自动同步) — 两条下载通道读的是同一份文件, 只需上传这一份。
 5. 浏览器直开短链 `https://www.keliit.top/tunnel/<短链>` → 目标服务页面
-6. 管理端"客户端下载"按钮可拿到 exe（服务端需提供 `/opt/nattunnel/client/dist/`）
+ 6. 管理端 exe 卡片有两条下载通道(内容一致): 登录态接口 /api/client/download 与静态直链 /nattunnel-admin/nattunnel-client.exe — 两者都读 server/app/static/nattunnel-client.exe(服务器唯一副本), 直链免登录
 
 ## 7. 安全注意
 

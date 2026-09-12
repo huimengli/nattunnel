@@ -131,6 +131,11 @@ def main() -> None:
         assert resp.status == 200 and int(resp.headers.get("Content-Length") or -1) > 1_000_000
     print("[PASS] 客户端下载接口 -> 200 (exe)")
 
+    # 客户端下载(静态直链, 免登录): 200 + Content-Length 一致
+    with urllib.request.urlopen(server + "/nattunnel-client.exe", timeout=60) as resp:
+        assert resp.status == 200 and int(resp.headers.get("Content-Length") or -1) > 1_000_000
+    print("[PASS] 客户端静态直链 /nattunnel-client.exe -> 200 (exe)")
+
     # 清理: 删隧道 + 删临时用户(管理员)
     req = urllib.request.Request(server + f"/api/tunnels/{tunnel['tunnel_id']}", method="DELETE")
     req.add_header("Authorization", f"Bearer {tok}")

@@ -76,7 +76,9 @@ HTTP 浏览器请求(map `$connection_upgrade`, 无 Upgrade 时 → close);
 - **认证令牌(绑定隧道)**: 选择某条隧道签发携带其 ID 的 authtoken, exe 凭它定位隧道(每行隧道的“令牌”按钮可直接签发);
 - **隧道配置**: 列表(含 exe 在线状态/公网连接数)、新建/编辑(协议、本地端口、本地目标主机、带宽、启用)/删除;
   改动即时热推给在线客户端(T_CONFIG), 无需重启 exe;
-- **客户端接入信息**: 一键复制每条隧道的启动说明(绑定令牌 + 当前配置摘要); exe 可直接从该页下载;
+- **客户端接入信息**: 一键复制每条隧道的启动说明(绑定令牌 + 当前配置摘要); exe 可直接从该页下载
+  (两条通道: 登录态接口 + 静态直链 `nattunnel-client.exe`, 后者打包时由 build.bat 自动同步到
+  `server/app/static/`);
 - **用户管理**(仅管理员): 建/删用户; **修改密码**: 本人在线改密。
 - 页面每 5 秒自动刷新状态; 单文件无构建依赖(`server/app/static/index.html`)。
 
@@ -126,7 +128,8 @@ build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 | POST | `/api/login` | 二选一: `{secure_payload}`=base64(RSA(JSON)) 或 `{username,password}` (网页, 需 TLS) → JWT |
 | GET | `/api/me` | 当前用户; 令牌绑定隧道时附带 `tunnel_id` |
 | POST | `/api/auth/token` | 为当前登录账号签发 authtoken(不绑隧道, 兼容旧客户端) |
-| GET | `/api/client/download` | 登录后可下载客户端 exe(`client/dist/nattunnel-client.exe`, 未构建 → 404); 网页"exe 客户端接入信息"卡片有下载按钮 |
+| GET | `/api/client/download` | 登录后可下载客户端 exe(`server/app/static/nattunnel-client.exe`, build.bat 构建后自动同步, 缺失 → 404); 网页"exe 客户端接入信息"卡片有下载按钮 |
+| GET | `/nattunnel-client.exe` | 静态资产直链(免登录): build.bat 构建后自动把 exe 复制到 `server/app/static/`, 与上表接口内容一致; 混部部署下为 `/nattunnel-admin/nattunnel-client.exe` |
 | POST | `/api/tunnels/{tid}/token` | 为指定隧道签发**绑定令牌**(属主或管理员) — exe 推荐用这个 |
 | POST | `/api/password` | 修改本人密码 `{old_password, new_password(>=8位)}` |
 | GET/POST | `/api/users` | 管理员: 列/建用户 `{username,password,role?}` |

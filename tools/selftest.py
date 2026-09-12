@@ -459,6 +459,15 @@ async def phase_http(server: str, token: str) -> None:
         dl_status, dl_cl = await loop.run_in_executor(None, _dl)
         check("D7 客户端下载接口 (200 + exe 大小)",
               dl_status == 200 and dl_cl > 1_000_000, f"{dl_status} CL={dl_cl}")
+
+        # D7b: 客户端静态直链(免登录; 应指向同一份 exe)
+        def _dl_static():
+            with urllib.request.urlopen(server + "/nattunnel-client.exe", timeout=60) as resp:
+                return resp.status, int(resp.headers.get("Content-Length") or -1)
+
+        s_status, s_cl = await loop.run_in_executor(None, _dl_static)
+        check("D7b 客户端静态直链 (200 + 同大小)",
+              s_status == 200 and s_cl == dl_cl, f"{s_status} CL={s_cl}")
     finally:
         if client_task is not None:
             await stop_client(client_task)

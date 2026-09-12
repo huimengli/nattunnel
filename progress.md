@@ -158,6 +158,28 @@
 - `database.py`: `reconfigure()` + SessionLocal 稳定代理(模块级 import 零改动热切引擎)。
 - README/deploy 文档/.env.example 同步为"免手工 .env"流程; 向导 E2E(fake tty)PASS; api_check 13 项 ALL PASS。
 
+### 2026-09-12 10:35 — records/2026-09-12-10-35-29.md
+
+- **exe 缺 cryptography 修复**: `client/requirements.txt` 只有 websockets, build.bat 新 venv 构建从未带
+  cryptography(RSA 握手 import 崩)。补 `cryptography>=41` + 重建。
+- **混部握手缺陷修复**(实测暴露): 客户端 REST(`/api/me`、`/api/tunnels/{tid}`)在混部下 404(落网盘站)
+  → 新增 `API_BASES = ("/api", "/nattunnel-admin/api")` + `api_json()` 前缀回退(仅 404/405 重试)。
+- **keliit.top 部署确认上线**: `/nattunnel-admin/api/health` → 200; 新 exe 假令牌实测走完
+  404→回退→FastAPI 401 全链路。用户侧: 最新 exe 分发/上传服务器供下载按钮使用。
+
+### 2026-09-12 11:17 — records/2026-09-12-11-17-20.md
+
+- **双下载通道**: 保留登录态 `/api/client/download`(读 client/dist); build.bat 构建后自动
+  `copy` exe → `server/app/static/nattunnel-client.exe` 静态直链(免登录, 既有 StaticFiles 挂载直接
+  提供, nginx 零改动); index.html exe 卡片加第二条链接; api_check/selftest(D7b)双通道校验。
+- api_check 14 项 + selftest 21 项全 PASS。用户侧: 两份 exe 上传服务器对应路径即可。
+
+### 2026-09-12 11:24 — records/2026-09-12-11-24-24.md
+
+- **下载单副本化**: API 通道 `/api/client/download` 改读 `server/app/static/nattunnel-client.exe`
+  (原 client/dist) — 两通道同源, 服务器只需 server/ 树; build.bat 自动同步 static 副本不变。
+- api_check 14 项 ALL PASS(重启后); README/deploy 文档同步"唯一副本"表述。
+
 ## 踩坑备忘(后续会话必读)
 
 1. **PyInstaller --onefile 是双进程**: `Stop-Process -Id <父>` 会留下孤儿子进程继续运行;

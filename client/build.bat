@@ -10,6 +10,7 @@ rem  The server URL may omit the scheme and/or carry a trailing path
 rem  (e.g. "www.keliit.top/tunnel/"); the client normalizes it at start.
 rem
 rem  Output : dist\nattunnel-client.exe - runs with just -a <bound-token>, no config file
+rem           (also copied to ..\server\app\static\nattunnel-client.exe as a static download asset)
 rem  Icon   : ..\favicon.ico is embedded when present (default icon otherwise)
 rem  Note   : do not use % characters in the URL (batch escaping)
 rem
@@ -48,3 +49,13 @@ rem pyinstaller-hooks-contrib handles dependencies automatically
   --name nattunnel-client ^
   %ICONFLAG% ^
   nattunnel_client.py
+
+rem copy the built exe into server/app/static so the web admin can also
+rem offer a plain static download link (nattunnel-client.exe, no login needed)
+if exist "dist\nattunnel-client.exe" (
+    echo [copy] dist\nattunnel-client.exe -^> ..\server\app\static\nattunnel-client.exe
+    copy /y "dist\nattunnel-client.exe" "..\server\app\static\nattunnel-client.exe" >nul
+    if errorlevel 1 echo WARNING: static copy failed (check server\app\static exists)
+) else (
+    echo WARNING: dist\nattunnel-client.exe not found - build may have failed, static copy skipped
+)
