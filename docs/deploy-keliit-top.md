@@ -72,15 +72,18 @@ Description=nattunnel server
 After=network.target
 
 [Service]
+# 下面两处改成你的实际安装目录(示例 /opt/nattunnel; venv 名以你创建时为准, .venv 或 env)
 WorkingDirectory=/opt/nattunnel/server
 ExecStart=/opt/nattunnel/server/.venv/bin/python run.py
-# 若手动启动用了 --port 9000, 这里同步加 --port 9000(nginx proxy_pass 也要对应)
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **端口以 `.env` 的 PORT 为准**(ExecStart 不带 --port): 向导默认写入 `PORT=8000`,
+> 若你要用 9000, 先 `sed -i 's/^PORT=8000$/PORT=9000/' .env`(nginx proxy_pass 同步)。
 
 ```bash
 systemctl daemon-reload
