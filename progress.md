@@ -150,6 +150,14 @@
   `@'127.0.0.1'`/`@'%'`, 仅 `@'localhost'` 会拒), 附一键修复 SQL。
 - .env.example/README 同步(交互优先, HOST 默认回环); 交互/非交互两路径均实测 PASS; api_check 13 项 ALL PASS。
 
+### 2026-09-11 21:48 — records/2026-09-11-21-48-55.md
+
+- **首启环境向导**: `.env` 缺失(或 DB 配置错误重进)时交互引导 — [1]MySQL[2]sqlite; MySQL 收集
+  主机/端口/库名/账号/密码并**立即试连**, 1045/1049 时可再输 root 密码自动建库+建用户+授权;
+  Redis/JWT_SECRET 带默认 → 生成 `server/.env` → 引擎热切换 → 管理员创建(上一轮流程)。
+- `database.py`: `reconfigure()` + SessionLocal 稳定代理(模块级 import 零改动热切引擎)。
+- README/deploy 文档/.env.example 同步为"免手工 .env"流程; 向导 E2E(fake tty)PASS; api_check 13 项 ALL PASS。
+
 ## 踩坑备忘(后续会话必读)
 
 1. **PyInstaller --onefile 是双进程**: `Stop-Process -Id <父>` 会留下孤儿子进程继续运行;

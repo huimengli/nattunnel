@@ -30,36 +30,39 @@ python3 -m venv .venv                    # 需要 Python >= 3.10
 .venv/bin/pip install -r requirements.txt   # 大陆服务器可先配 pip 镜像源
 ```
 
-## 3. 配置 .env
+## 3. 首次启动（终端交互配置：自动建 .env + 管理员）
 
-```bash
-cd /opt/nattunnel/server
-cat > .env <<EOF
-# 首启用 sqlite(免装 MySQL); 日后想切 MySQL 见第 8 步
-DATABASE_URL=sqlite:///./nattunnel.db
-REDIS_URL=redis://127.0.0.1:6379/0      # 没装 Redis 可留空, 服务自动降级(内存兜底)
-JWT_SECRET=$(openssl rand -hex 32)
-EOF
-```
-
-> **管理员账号在首次启动时于控制台交互创建**(见第 4 步), `.env` 不再需要 INITIAL_ADMIN_*。
-> `INITIAL_ADMIN_USERNAME/INITIAL_ADMIN_PASSWORD` 仅用于**非交互**场景(systemd/docker 无终端)。
-
-## 4. 首次启动（终端交互创建管理员）+ systemd 服务
-
-**先手动在终端跑一次**（此时数据库里还没有管理员, 控制台会引导输入）：
+**无需手工写 .env** — 在服务器终端里直接跑，控制台向导会引导全部配置：
 
 ```bash
 cd /opt/nattunnel/server
 .venv/bin/python run.py            # 8000 被其他站占用时: .venv/bin/python run.py --port 9000
-# => 首次启动提示:
-#    管理员用户名 [默认 admin]: _
-#    管理员密码(至少 8 位, 隐藏输入): _
-#    请再次输入管理员密码: _
-# 创建成功后进入 "Application startup complete"; Ctrl+C 退出
 ```
 
-**再交给 systemd**（单 worker！中继状态在进程内存）：
+向导流程（`.env` 不存在时触发；已存在则跳过直连）：
+
+```text
+[1] MySQL   [2] sqlite 文件(最快, 免安装)      <- 选 1 时依次输入:
+MySQL 主机 [127.0.0.1]:            # 默认值直接回车
+MySQL 端口 [3306]:
+数据库名 [nattunnel]:
+账号 [nattunnel]:
+密码:                              # 隐藏输入; 立即试连
+  (若 Access denied / 库不存在 => 可再输 MySQL root 密码, 向导自动建库+建账号+授权)
+Redis 连接串(没有可留空) [redis://127.0.0.1:6379/0]:
+=> 写入 server/.env(JWT_SECRET 自动生成)
+
+检测到尚无管理员账号, 请在控制台创建
+管理员用户名 [admin]:
+管理员密码(至少 8 位, 隐藏输入): _
+请再次输入管理员密码: _
+```
+
+看到 `Application startup complete` 即就绪；`Ctrl+C` 退出，然后交给 systemd（下节）。
+> 已有现成 `.env`（模板见 `server/.env.example`）则向导不触发；非交互场景
+> （systemd/docker）回退 `.env` 的 DATABASE_URL / INITIAL_ADMIN_PASSWORD。
+
+## 4. systemd 服务（单 worker！中继状态在进程内存）
 
 `/etc/systemd/system/nattunnel.service`：
 
@@ -82,7 +85,7 @@ WantedBy=multi-user.target
 ```bash
 systemctl daemon-reload
 systemctl enable --now nattunnel
-journalctl -u nattunnel -f     # 看到 "Application startup complete" 即就绪
+journalctl -u nattunnel -f     # "Application startup complete" 即就绪; 之后每次重启不再出现任何提示
 ```
 
 > HOST 默认只绑 `127.0.0.1`（混部安全）；**不要**在防火墙放通 8000 端口。
