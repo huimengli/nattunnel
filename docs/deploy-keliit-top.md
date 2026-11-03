@@ -121,7 +121,12 @@ curl -s https://www.keliit.top/nattunnel-admin/api/health   # => {"ok":true,...}
    > **exe 必须是 2026-09-12 之后的构建**: 旧构建缺 cryptography 依赖(启动即崩),
    > 且不带 API 前缀回退(混部下握手 404)。若走"下载 exe"按钮分发,
     > (build.bat 构建后自动同步) — 两条下载通道读的是同一份文件, 只需上传这一份。
-5. 浏览器直开短链 `https://www.keliit.top/tunnel/<短链>` → 目标服务页面
+5. 浏览器直开短链 `https://www.keliit.top/tunnel/<短链>` → 目标服务页面(http 隧道)
+5b. **页面里的 WebSocket(经隧道桥接到内网 WS 服务)**: 隧道协议选 `http` 或 `tcp`, 网页内
+    `new WebSocket("wss://www.keliit.top/tunnel/<短链>/ws")` → 握手被透传到内网服务(101 与数据帧双向透明);
+    走的是**同一个 `/tunnel/` location**(nginx 的 `Upgrade`/`Connection` map 已覆盖, 无需新增配置);
+    命令行验证: `python tools/ws_handshake_test.py wss://www.keliit.top/tunnel/<短链>/ws --send ping [--sub chat]`
+    (子协议协商: 内网服务要求 `chat` 时加 `--sub chat`, 结果原样回带)
  6. 管理端 exe 卡片有两条下载通道(内容一致): 登录态接口 /api/client/download 与静态直链 /nattunnel-admin/nattunnel-client.exe — 两者都读 server/app/static/nattunnel-client.exe(服务器唯一副本), 直链免登录
 
 ## 7. 安全注意

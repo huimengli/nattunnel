@@ -189,7 +189,9 @@ build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 cd server && DATABASE_URL="sqlite:///./selftest.db" \
     INITIAL_ADMIN_PASSWORD="dev-only-12345" \
     python -m uvicorn app.main:app --port 8100
-# 2) 另一终端(测试凭据走参数/环境变量, 不入库)
+# 2) 非交互启动需先有 server/.env(缺失会触发首启交互向导, 后台跑会卡在输入);
+#    在终端里跑 python run.py 走向导生成 .env, 或手工写 server/.env(gitignored)
+# 3) 另一终端(测试凭据走参数/环境变量, 不入库)
 NATTUNNEL_TEST_PASSWORD=dev-only-12345 python tools/selftest.py --server http://127.0.0.1:8100
 python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.0.1:8100
 
