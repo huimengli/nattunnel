@@ -1,11 +1,11 @@
 """隧道中继: 进程内 Room 注册表 + Redis 在线状态/登录限流。
 
 帧格式(所有 WS 消息均为二进制, 统一 5 字节头):
-    [type 1B][peer_id 4B big-endian][payload ...]
+    [type 1B][peer_id 4B BE][payload ...]
 
 type 定义:
     0x01 NEW_STREAM   server -> LAN      公网对端已连接(peer_id)
-    0x02 DATA         双向               TCP 字节流
+    0x02 DATA         双向               TCP/HTTP 字节流
     0x03 FIN          双向               TCP 半关/流结束
     0x04 CLOSE        双向               流拆除
     0x05 HELLO        server -> 公网侧   分配 peer_id
@@ -15,6 +15,12 @@ type 定义:
 角色:
     LAN 侧  = 客户端 exe, 连接时携带有效 Bearer JWT 且是隧道属主/管理员;
     公网侧  = 其他任何连接(浏览器测试、ws 工具等), 每连接即一条流。
+
+协议(proto)与公网侧访问方式(2026-11-03 起):
+    http —— 纯 HTTP 直转(浏览器开短链) + WS 握手桥接(见 http_bridge.py);
+    tcp  —— 原生 TCP 字节流: 声明 WS 子协议 nattunnel-relay 的连接走本中继的帧协议裸流;
+            未声明该子协议的 WS 握手由桥接层透传到内网 WS 服务;
+    udp  —— 仅本中继的帧协议数据报(无 HTTP/WS 桥接语义)。
 """
 import json
 import logging
@@ -33,14 +39,35 @@ T_HELLO = 0x05
 T_CONFIG = 0x21
 U_DATA = 0x41
 
+# 隧道协议取值: http(原 tcp 的浏览器直口语义) / tcp(原生字节流 + WS 握手桥接) / udp
+PROTOS = ("http", "tcp", "udp")
+
+# 公网侧"帧协议裸流"客户端(测试工具 / 自建 ws<->tcp 桥)必须声明该 WS 子协议;
+# 未声明该子协议的 WS 握手视为"桥接到内网 WS 服务"(http_bridge._ws_bridge)。
+RELAY_SUBPROTOCOL = "nattunnel-relay"
+
+
 _redis = None
 
 
 def get_redis() -> redis_lib.Redis:
+    """惰性 Redis 客户端(在线状态/登录限流; 不可用时各处已降级)。"""
     global _redis
     if _redis is None:
         _redis = redis_lib.from_url(REDIS_URL, decode_responses=True)
     return _redis
+
+
+def data_type(proto: str) -> int:
+    """该协议的数据帧类型: udp=数据报, 其余(http/tcp)=字节流。"""
+    return U_DATA if proto == "udp" else T_DATA
+
+
+def alloc_peer(room) -> int:
+    """分配公网侧 peer_id(桥接层与中继共用)。"""
+    pid = room.next_peer
+    room.next_peer += 1
+    return pid
 
 
 def make_frame(type_: int, peer_id: int, payload: bytes = b"") -> bytes:
@@ -60,7 +87,7 @@ class Room:
         self.tunnel_id = tunnel_id
         self.proto = proto
         self.lan = None          # LAN 侧 websocket(每隧道至多一个)
-        self.pubs = {}           # peer_id -> 公网侧 websocket
+        self.pubs = {}           # peer_id -> 公网侧 websocket 或桥接伪入口(_QueuePub)
         self.next_peer = 1
 
 

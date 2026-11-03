@@ -1,203 +1,102 @@
 # nattunnel — 跨会话进度台账
 
+<!-- 已归档于 ai_buckup/progress.md_2026-11-03-18-58-00.md (203 行全量; 历史会话条目/踩坑/部署排障细节均在备份) -->
+
 ## 项目目标
 
 无公网 IP 电脑 ⇄ 有公网 IP 服务器(nginx 反代 www.xxx.com):
 客户端 exe 将本机端口转发到 `www.xxx.com/tunnel/<8位短链>`。
-技术栈: Python / FastAPI / MySQL / Redis / JWT / RSA 握手 / WebSocket 中继; 支持 tcp|udp、前端端口与带宽配置; 用户系统(管理员于首次启动时初始化, 凭据经 .env/日志, 代码无硬编码)。
+技术栈: Python / FastAPI / MySQL / Redis / JWT / RSA 握手 / WebSocket 中继;
+协议 **http | tcp | udp**(2026-11-03 改), 前端端口与带宽配置; 用户系统(管理员首启初始化, 代码无硬编码)。
 
 ## 关键约定
 
 - 8 位短链: 字母表去混淆字符, 例 `XgMacp2G`; 自动生成或手工指定。
-- 角色判定: `/tunnel/{id}` WS 携带有效 Bearer JWT 且为属主/admin → LAN 侧; 否则公网侧(每连接一条流)。
+- 角色判定: `/tunnel/{id}` WS 携带有效 Bearer JWT 且属主/admin → LAN 侧; 否则公网侧(每连接一条流)。
 - 帧协议: `[type 1B][peer_id 4B BE][payload]`; 0x01 NEW / 0x02 DATA / 0x03 FIN / 0x04 CLOSE / 0x05 HELLO / 0x21 CONFIG(热更新) / 0x41 UDP-DATA。
 - 带宽由客户端令牌桶执行(双向共用, kbps, 0=不限)。
-- 中继状态在进程内存(Redis 记录在线状态与登录失败计数) → **必须单 worker**。
+- 中继状态在进程内存(Redis 记在线状态与登录失败计数) → **必须单 worker**。
+- **协议语义(2026-11-03)**: `http` = 混合(浏览器直开逐请求直转 + WS 握手桥接 + 子协议裸流);
+  `tcp` = 原生字节流(WS 握手桥接 + 子协议裸流, 纯 HTTP → 400); `udp` = 仅子协议数据报(WS 握手 → 400)。
+- 公网侧 WS 归属: Bearer→LAN; 子协议 `nattunnel-relay`→帧协议裸流中继; 其余(浏览器式)→ http_bridge 桥接到内网 WS 服务。
+- 存量 `proto=tcp`(旧浏览器直开语义)首启一次性迁移为 `http`(AppSetting `proto_tcp_to_http_v1` 标记)。
 
 ## 凭据 / 环境
 
 | 项 | 值 |
 |---|---|
-| 管理员 | 首次启动创建: **交互终端** `python run.py` 时控制台引导输入用户名/密码(隐藏+二次确认); 非交互(systemd/docker)回退 `.env INITIAL_ADMIN_PASSWORD` 或随机生成+日志一次性打印; 登录后 POST /api/password 可改密; 代码与文档无硬编码凭据 |
-| 示例隧道 | XgMacp2G (tcp, 3389, 不限速) |
+| 管理员 | 首启创建: 交互终端 `python run.py` 控制台引导(隐藏+二次确认); 非交互回退 `.env INITIAL_ADMIN_PASSWORD` 或随机 16 位+日志一次性打印; 登录后 POST /api/password 改密; 无硬编码凭据 |
+| 示例隧道 | XgMacp2G (tcp=字节流, 3389, 不限速) |
 | 后端默认地址 | http://127.0.0.1:8000 (server/ 目录 `python run.py`) |
-| MySQL/Redis | server/docker-compose.yml 一键起 |
+| MySQL/Redis | server/docker-compose.yml 一键起(无 Redis 时在线状态/限流降级内存) |
+| 本机自测 | `.venv` + `DATABASE_URL=sqlite:///./selftest.db` + `INITIAL_ADMIN_PASSWORD` 环境变量; `.env` 缺失会触发首启交互向导 |
 
 ## 状态总览
 
-- [x] 项目骨架 + 台账(progress.md / tree.md / records/)
-- [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据
-- [x] 客户端: **无本地配置**(config.json 已废除) — 服务器地址 `build.bat -s` 构建时写死; 隧道 ID 由**绑定令牌**决定(`-a`/控制台); 端口/协议/带宽/**本地目标主机**全部运行时从服务器隧道设置读取; T_CONFIG 热更新(端口/带宽/目标主机即生效, 协议变更自动重连); build.bat(PyInstaller --onefile, -s 写死服务器 + favicon.ico 图标)
-- [x] 网页管理端: 单文件管理页(登录/隧道 CRUD+在线状态/用户管理/改密/认证令牌签发/**客户端 exe 下载按钮**)
-- [x] nginx 反代配置、docker-compose、公网侧测试工具、端到端 selftest
-- [x] **纯 HTTP 直转**: 浏览器可直接打开 `http(s)://域名/tunnel/<短链>[/子路径]`(tcp 隧道, HttpBridgeMiddleware); nginx map 头兼容; HTML 响应注入 `<base>` 使相对引用(含 JS fetch)落在隧道前缀
-- [x] **混部子路径部署就绪**: 管理页 API 全相对路径; `nginx/nattunnel-embed.conf`(现有 vhost 加 `/tunnel/` + `/nattunnel-admin/` 两块); HOST 默认只绑回环; `docs/deploy-keliit-top.md` 完整步骤
-- [x] 本机冒烟实测: selftest 20/20 PASS + api_check 13 项全 PASS (sqlite+Redis, 2026-09-11)
-- [x] PyInstaller 出 exe: client/dist/nattunnel-client.exe, EXE 全链路 E2E PASS(真实回显); **图标**: 仓库根 favicon.ico 经 build.bat `--icon` 打进 exe
-- [x] 去硬编码凭据: 管理员启动时初始化(.env/随机口令+日志一次性打印) + POST /api/password; 仓库无真实账号密码, 可推 git
-- [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`(步骤见 docs/deploy-keliit-top.md);
-      客户端 exe 已内置该域名(2026-09-11 20:17 构建); 部署后改管理员密码
+- [x] 骨架 + 台账(progress.md / tree.md / records/ / todo.md / need_user.md / tests/)
+- [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据/绑定令牌
+- [x] 客户端: 无本地配置 — 服务器地址 build 时写死, 隧道 ID 由绑定令牌决定, 端口/协议/带宽/目标主机运行时读取; T_CONFIG 热更新; PyInstaller --onefile + favicon 图标
+- [x] 网页管理端: 单文件(登录/隧道 CRUD+在线状态/用户/改密/绑定令牌签发/exe 下载按钮); 协议下拉三项 + 语义说明
+- [x] **纯 HTTP 直转(http 隧道)**: 浏览器直开短链, 逐请求直转发 + HTML `<base>` 注入 + Content-Length 同步; nginx map 头兼容
+- [x] **WebSocket 握手桥接(http/tcp 隧道)**(2026-11-03): 握手 101 + 数据帧/文本帧双向透明, `Sec-WebSocket-Key` 原样转发,
+  子协议协商结果回带, 剥 `Sec-WebSocket-Extensions`; 拒绝码 404(隧道缺失)/502(LAN 离线)/504(无握手响应)/内网非 101 原码透传
+- [x] 混部子路径部署(nginx embed + 管理页相对路径 + API_BASES 回退) + docs/deploy-keliit-top.md
+- [x] 端到端自测: selftest 阶段 A(字节流+热更新)/B(UDP)/C(绑定令牌)/D(纯 HTTP 直转+tcp 拒绝)/E(WS 握手桥接) 32 项 + api_check 18 项, 20 轮全 PASS
+- [x] exe 双下载通道(登录态 API + 静态直链, 单副本在 server/app/static/)
+- [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`; 部署后改管理员密码(步骤见 docs/deploy-keliit-top.md)
+- [ ] `tcp+udp` 同端口双栈混合(用户 2026-11-03 选方案A, 本项列为后续需求)
 
-## 会话记录
+## 会话摘要(最近)
 
-### 2026-09-11 00:33 — records/2026-09-11-00-33-34.md
+### 2026-11-03 13:21 — records/2026-11-03-13-21-03.md (协议改造 + WS 握手桥接)
 
-- 从零搭建全部代码(server/app/*, client/*, tools/*, nginx, docker-compose)。
-- 设计并实现帧协议与角色判定; 种子化初始管理员(当时硬编码的凭据已于会话 2 全部移除)与示例隧道 XgMacp2G。
-- venv(py3.12)安装依赖; py_compile 全通过; sqlite 冒烟 + uvicorn:8100 实测。
-- selftest 端到端 7/7 PASS(TCP/UDP echo 往返, 进程内跑真实客户端代码)。
-- api_check PASS(建用户/越权403/建隧道/PATCH/列表/清理)。
-- EXE 构建成功并 E2E PASS: 公网侧 WS → EXE(lan) → 本地 echo 服务 → 原样回显。
-- 修复 4 个实测发现的 bug(详见记录文件的"缺陷与修复"节)。
-
-### 2026-09-11 11:19 — records/2026-09-11-11-19-31.md
-
-- 因项目要推 git, 移除全部硬编码管理员凭据(lt 账号): seed 改为**首启初始化**(env 密码或随机 16 位口令+日志一次性打印), 已有 admin 永不覆盖。
-- 新增 `POST /api/password`(改密); `.env`/`client/config.json` 纳入 gitignore; 测试脚本凭据走参数/环境变量。
-- 实测: env 首启/随机首启/改密/重启不重置/api_check 回归 全 PASS; grep 复核仓库零残留, 可安全推送。
-
-### 2026-09-11 14:36 — records/2026-09-11-14-36-13.md
-
-- **配置热更新**: 新增帧 `0x21 T_CONFIG`(server→LAN, JSON)。网页 PATCH 隧道时:
-  端口/带宽变更 → 保留房间并即时推给在线客户端(新流用新端口、令牌桶改速);
-  协议变更 → 拆房间, 客户端自动重连拉新配置。修复"改端口后运行中的客户端不生效"。
-- **客户端 token 化**: 启动必须携带 authtoken — `-a/--auth <token>` 或启动后控制台粘贴(可反复输入);
-  `GET /api/me` 先校验令牌, 再握手拉隧道配置建隧。exe 不再持有账号密码; RSA 登录通道保留在 API 侧。
-- **客户端 CLI**: 新增 `-s/--server` 覆盖 config.json 的 server; config.json 精简为
-  `{server, tunnel_id, local_target_host?, verify_ssl?}`(去掉 username/password, 旧配置兼容)。
-- **网页管理端**: 新增"认证令牌"卡片(生成/复制 authtoken 供 exe 使用); 客户端接入信息片段同步更新。
-- 新接口 `POST /api/auth/token`; selftest 新增 A4/A5 热更新检查(9/9 PASS); api_check 回归 PASS;
-  EXE 实测: `-a` 建隧 ✓ / stdin 粘贴建隧 ✓ / 无效令牌退出码2 ✓ / 运行中改端口即生效(E2E probe) ✓。
-
-### 2026-09-11 15:15 — records/2026-09-11-15-15-26.md
-
-- **令牌绑定隧道**: JWT 增加 `tunnel_id` 声明; 新接口 `POST /api/tunnels/{tid}/token`(属主/admin);
-  `/api/me` 回带绑定 ID。客户端凭令牌确定隧道配置(config.json 不再需要 tunnel_id, 旧配置回退兼容)。
-- 客户端启动横幅新增**公网访问短链** `{server}/tunnel/<8位随机短链>`(服务端自动生成)。
-- 网页管理端: 令牌卡片改为按隧道签发 + 每行"令牌"按钮; 接入片段去 tunnel_id。
-- selftest 新增阶段 C(C1–C4, 无 tunnel_id 配置凭令牌定位) → **13/13 PASS**; api_check 加绑定令牌检查 → ALL PASS。
-
-### 2026-09-11 16:53 — records/2026-09-11-16-53-59.md
-
-- **诊断**: 用户浏览器访问短链显示 `{"detail":"Not Found"}` — 非故障: `/tunnel/{id}` 原为纯 WS 端点,
-  普通 GET 落到静态挂载; 隧道与客户端均正常(经隧道实测收到 llama.cpp 200 HTML)。
-- **增强(浏览器直开短链)**: 新增 `server/app/http_bridge.py` — `/tunnel/{tid}[/子路径]` 接受纯 HTTP(无 Upgrade),
-  每请求一条隧道流转发到本地服务并流式回传(头限时 20s/CL+chunked+FIN 判尾; LAN 离线 503, udp 400)。
-  main.py: 注册中间件 + LAN 循环补转发 T_FIN; nginx conf: map `$connection_upgrade`(普通 HTTP 不再强推 upgrade)。
-- 踩坑两例: ①隧道模型无 `local_target_host`(Host 头改固定 127.0.0.1:<port>); ②`_send_lan` 空 payload 丢帧致 T_NEW 静默丢失 → 504, 已修。
-- selftest 新增阶段 D(D1–D5) → **18/18 PASS**; api_check 加"HTTP 直转离线 503" → ALL PASS;
-  实战: 浏览器式 GET `xN5MYedx` → **llama.cpp UI 200 完整 HTML** ✓。
-
-### 2026-09-11 18:00 — records/2026-09-11-18-00-20.md
-
-- **白屏诊断**: 浏览器开短链后页面本体 200, 但相对资源(`_app/...`/favicon/manifest)解析到
-  `/tunnel/_app/...`(掉出隧道 ID 前缀)→ 静态 404 白屏。根因: 文档 URL 不带尾斜杠时, 浏览器相对引用
-  以 `/tunnel/` 为基点。
-- **修复(HTML `<base>` 注入)**: 纯 HTTP 直转对 text/html 响应在 `<head>` 后注入
-  `<base href="/tunnel/{tid}/">`, 钉住全部相对解析(含 JS 运行时 fetch); Content-Length 同步 +注入长;
-  gzip/chunked 响应不注入(chunked 显式块大小会被插字节破坏)。
-- 踩坑: 首版注入后 `pop_body` 仍按原 CL 截断 → 尾部 31 字节丢失; `note_injected()` 修复。
-- selftest 新增 D6(注入 + CL 同步) → **19/19 ALL PASS**; api_check 回归 ALL PASS;
-  实战: llama.cpp UI 经隧道全资源加载(页面 12669B / bundle.js 8.8MB / CSS 542KB / favicon / manifest),
-  `/health` 透传 OK。
-
-### 2026-09-11 18:15 — records/2026-09-11-18-15-06.md
-
-- **网页客户端下载按钮**: 新接口 `GET /api/client/download`(登录态) 流式返回
-  `client/dist/nattunnel-client.exe`; 未构建 → 404 提示 build.bat。
-  管理端"exe 客户端接入信息"卡片加"下载客户端 exe"按钮(Blob 下载, 401 自动登出)。
-- selftest 新增 D7(200 + exe 大小) → **20/20 ALL PASS**; api_check 加下载检查 → ALL PASS;
-  实测: 带令牌 200 / CL=13341996(与磁盘一致) / `attachment` 头, 无令牌 401。
-
-### 2026-09-11 18:57 — records/2026-09-11-18-57-13.md
-
-- **exe 图标**: 用户放置仓库根 `favicon.ico`(64×64 ICO, 16958B); `build.bat` 加
-  `--icon ..\favicon.ico`(缺失时跳过不中断)。重新构建并**验证字节级嵌入**(PE 资源区含完整 16936B 图像载荷)。
-- 构建前需停掉运行中的 exe(onefile 父进程锁文件); 重建后重启 XgMacp2G 与 xN5MYedx 两客户端均在线,
-  llama.cpp `/health` 与下载端点(新 CL=13299500)正常。
-
-### 2026-09-11 19:49 — records/2026-09-11-19-49-36.md
-
-- **废除 config.json**: 客户端零本地配置。服务器地址 `build.bat -s <url>` 生成 `client/build_config.py`
-  随 PyInstaller 写死进 exe; 隧道 ID 只认绑定令牌; `local_target_host` 新加为**隧道字段**
-  (models/schemas/API/网页弹窗/T_CONFIG), 客户端从服务器配置读取并可热更新。
-- selftest 20/20 + api_check 13 全 PASS; 实测 PATCH local_target_host 热更新后新流即用新主机。
-
-### 2026-09-11 20:21 — records/2026-09-11-20-21-38.md
-
-- **build.bat 乱码修复**: UTF-8 中文注释被 GBK 码页 cmd 解析成乱码命令 → 改**纯 ASCII**(英文注释+警示头),
-  踩坑备忘 #7。
-- **URL 宽容解析**: 客户端新增 `normalize_server()`(裸域名补 https://, 去末尾 `/tunnel/` 等路径);
-  用户原命令 `build.bat -s www.keliit.top/tunnel/` cmd 实跑构建成功 → exe(7.76MB)写死 www.keliit.top。
-- **发现**: www.keliit.top 当前托管的是另一站("个人网盘"), /api/health 返回字面量 `null` —
-  nattunnel 尚未部署到该域(本会话下半段完成子路径改造以支持混部部署)。
-
-### 2026-09-11 20:58 — records/2026-09-11-20-58-37.md
-
-- **混部子路径部署就绪**: 管理页 13 处 API 改相对路径(根/子路径同一份代码);
-  新增 `nginx/nattunnel-embed.conf`(现有 vhost: `/tunnel/` 原样直通 + `/nattunnel-admin/` 剥前缀, map 可复用);
-  `config.py` HOST 默认 0.0.0.0 → **127.0.0.1**(混部安全, 不放通 8000)。
-- `docs/deploy-keliit-top.md`: 上传(保仓库根布局)/venv/.env(首启 sqlite+Redis 可缺降级)/systemd 单 worker/nginx 嵌入/验证清单/安全注意。
-- 验证: 子路径模拟代理下管理页+登录+隧道列表全通; 服务器重启后两客户端自动重连; api_check 13 项 ALL PASS。
-- **待办**: keliit.top 服务器上按 docs/deploy-keliit-top.md 执行(本机无该服务器 SSH; 需用户提供或自行执行)。
-
-### 2026-09-11 21:17 — records/2026-09-11-21-17-16.md
-
-- **首启交互式创建管理员**: seed.py 检测无 admin 时 — 交互终端(pty)控制台引导输入用户名/密码
-  (getpass 隐藏+二次确认, EOF/Ctrl+C 干净退出); 非交互(systemd/docker)回退 .env/随机+日志一次性打印。
-- **run.py 加 `--host/--port`**: 用户的 `python run.py --port 9000` 生效(原先被静默忽略)。
-- **部署排障(MySQL 1045)**: deploy 文档新增 §9 — 密码不一致 or 用户主机范围坑(TCP 连 127.0.0.1 需
-  `@'127.0.0.1'`/`@'%'`, 仅 `@'localhost'` 会拒), 附一键修复 SQL。
-- .env.example/README 同步(交互优先, HOST 默认回环); 交互/非交互两路径均实测 PASS; api_check 13 项 ALL PASS。
-
-### 2026-09-11 21:48 — records/2026-09-11-21-48-55.md
-
-- **首启环境向导**: `.env` 缺失(或 DB 配置错误重进)时交互引导 — [1]MySQL[2]sqlite; MySQL 收集
-  主机/端口/库名/账号/密码并**立即试连**, 1045/1049 时可再输 root 密码自动建库+建用户+授权;
-  Redis/JWT_SECRET 带默认 → 生成 `server/.env` → 引擎热切换 → 管理员创建(上一轮流程)。
-- `database.py`: `reconfigure()` + SessionLocal 稳定代理(模块级 import 零改动热切引擎)。
-- README/deploy 文档/.env.example 同步为"免手工 .env"流程; 向导 E2E(fake tty)PASS; api_check 13 项 ALL PASS。
-
-### 2026-09-12 10:35 — records/2026-09-12-10-35-29.md
-
-- **exe 缺 cryptography 修复**: `client/requirements.txt` 只有 websockets, build.bat 新 venv 构建从未带
-  cryptography(RSA 握手 import 崩)。补 `cryptography>=41` + 重建。
-- **混部握手缺陷修复**(实测暴露): 客户端 REST(`/api/me`、`/api/tunnels/{tid}`)在混部下 404(落网盘站)
-  → 新增 `API_BASES = ("/api", "/nattunnel-admin/api")` + `api_json()` 前缀回退(仅 404/405 重试)。
-- **keliit.top 部署确认上线**: `/nattunnel-admin/api/health` → 200; 新 exe 假令牌实测走完
-  404→回退→FastAPI 401 全链路。用户侧: 最新 exe 分发/上传服务器供下载按钮使用。
+- 需求原文: "tcp 隧道实测只能转发 HTTP 但 WebSocket 握手到不了; 隧道选项 tcp,udp → http,tcp,udp; 原有 tcp 改为 http, tcp 需支持 WebSocket 握手"。
+- `relay.py`: `PROTOS=(http,tcp,udp)` + `RELAY_SUBPROTOCOL="nattunnel-relay"` + `data_type(proto)` + `alloc_peer(room)`(HTTP 桥接与 WS 桥接共用房间分配); 恢复被误删的 `get_redis()`。
+- `http_bridge.py`(重写): 新增 `WSCodec`(最小 RFC6455 客户端编解码: 掩码帧发/不掩码帧收, 分片/控制帧, RSV 非 0 与掩码服务端帧拒绝),
+  `_build_ws_handshake`(剥 host/connection/upgrade/proxy-connection/sec-websocket-extensions, 补 Host/Connection/Upgrade/Version),
+  `_parse_ws_response`, `_ws_bridge`(握手透传→101 用同一 key 完成对浏览器 accept 并回带子协议→双向字节管道),
+  `_ws_reject`(ASGI `websocket.http.response` 预拒绝), 纯 HTTP 直转限定 `proto == "http"`(否则 400)。
+- `main.py`: 接受时回填 `nattunnel-relay` 子协议; `data_types = {data_type(tunnel.proto)}`; 角色/日志带 proto。
+- `schemas.py`/`models.py`: proto 取值 `^(http|tcp|udp)$`, 默认 `http`; `seed.py`: 一次性迁移 tcp→http(AppSetting 标记) + 演示隧道注释。
+- `client/nattunnel_client.py`: `proto in ("tcp","http")` 均走字节流管道; 仅切到 `udp` 需重连。
+- 管理页 `index.html`: 协议下拉 http/tcp/udp + 弹窗协议提示(protoHint) + 隧道卡片协议语义说明(混合表述)。
+- 工具: `ws_tcp_test.py`/`ws_udp_test.py` 声明子协议; 新增 `tools/ws_handshake_test.py`(浏览器式 WS 握手/echo/子协议打印);
+  selftest 新增阶段 E(E1-E10)与 D8; api_check 新增协议取值(422)/PATCH 改协议。
+- 方案A(用户拍板): 不新增 mixed 协议, `http` 即混合; `tcp+udp` 双栈混合列为后续需求(need_user.md Q1 已答, 已归档)。
+- 实测: 20 轮全 PASS(selftest 32 项 + api_check 18 项) → tests/2026-11-03-13-21-03_cc/(record_1..20 + opinion.md), 累积 tests/opinion.md。
 
 ### 2026-09-12 11:17 — records/2026-09-12-11-17-20.md
 
-- **双下载通道**: 保留登录态 `/api/client/download`(读 client/dist); build.bat 构建后自动
-  `copy` exe → `server/app/static/nattunnel-client.exe` 静态直链(免登录, 既有 StaticFiles 挂载直接
-  提供, nginx 零改动); index.html exe 卡片加第二条链接; api_check/selftest(D7b)双通道校验。
-- api_check 14 项 + selftest 21 项全 PASS。用户侧: 两份 exe 上传服务器对应路径即可。
+- 双下载通道: `/api/client/download`(登录态) + `server/app/static/nattunnel-client.exe` 静态直链(免登录, build.bat 自动同步); api_check/selftest(D7b)双通道校验。
 
 ### 2026-09-12 11:24 — records/2026-09-12-11-24-24.md
 
-- **下载单副本化**: API 通道 `/api/client/download` 改读 `server/app/static/nattunnel-client.exe`
-  (原 client/dist) — 两通道同源, 服务器只需 server/ 树; build.bat 自动同步 static 副本不变。
-- api_check 14 项 ALL PASS(重启后); README/deploy 文档同步"唯一副本"表述。
+- 下载单副本化: API 通道改读 static 副本(两通道同源); 服务器只需 server/ 树。
 
 ## 踩坑备忘(后续会话必读)
 
-1. **PyInstaller --onefile 是双进程**: `Stop-Process -Id <父>` 会留下孤儿子进程继续运行;
-   杀 exe 一律用 `taskkill /F /IM nattunnel-client.exe`。
-2. **TCP 竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成到达 → 主循环须先 `await open_tasks[pid]`
-   再入队(已在 run_tcp 中实现); 新增流逻辑时保持该顺序。
+1. **PyInstaller --onefile 是双进程**: 杀 exe 用 `taskkill /F /IM nattunnel-client.exe`(父进程 kill 会留孤儿子进程)。
+2. **TCP 建连竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成 → 主循环先 `await open_tasks[pid]` 再入队(已在 run_tcp 实现)。
 3. `asyncio.DatagramTransport.sendto()` 是**同步方法**, 不能 await。
-4. sqlite 冒烟路径在并发 WS 风暴下会锁竞争卡死(服务器可自恢复); MySQL 生产无此问题,
-   但中继仍是单 worker 内存态 — 扩容前需 Redis Pub/Sub 化。
-5. `RSA` 私钥对象无 `public_bytes`, 要 `key.public_key().public_bytes(...)`。
-6. **存量库加列**: 项目无迁移框架 — 在 `seed.py` 的 init_db 里做幂等 `ALTER TABLE`(捕获
-   duplicate column/1060 忽略); 新建库由 create_all 处理。schema 演进一律走这个模式。
-7. **.bat 脚本必须纯 ASCII**: 中文 Windows 的 cmd 按 OEM 码页(GBK)解析 .bat, UTF-8 中文注释会
-   变成乱码命令甚至吃掉后续语句 — build.bat 已全部改英文注释并加了警示头。
+4. sqlite 在并发 WS 风暴下会锁竞争卡死(可自恢复); 生产 MySQL 无此问题; 中继仍是单 worker 内存态(扩容前需 Redis Pub/Sub 化)。
+5. RSA 私钥对象无 `public_bytes`, 用 `key.public_key().public_bytes(...)`。
+6. **存量库加列**: 无迁移框架 → `seed.py` init_db 里幂等 `ALTER TABLE`(捕获 duplicate/1060); 新库由 create_all。schema 演进走这个模式(本次 proto 迁移用 AppSetting 标记)。
+7. **.bat 必须纯 ASCII**: 中文 Windows cmd 按 GBK 解析 .bat, UTF-8 中文注释会乱码甚至吃掉后续语句。
+8. **本机解释器无 `secrets.randbytes`**(3.12 定制安装): 需要随机字节用 `secrets.token_bytes(n)`。
+9. **WS 桥接路径语义**: 裸流(子协议 nattunnel-relay)必须连裸路径 `/tunnel/<ID>`; 带子路径(如 `/tunnel/<ID>/ws`)不匹配 FastAPI 路由,
+   uvicorn 以 403 拒绝握手。用 `websocket.http.response` 预拒绝时 uvicorn 会打
+   `ASGI callable returned without completing handshake` — 属正常表征(客户端得到 HTTP 响应)。
+10. **spawn 子进程随 run_code 进程退出即被杀**: 服务器必须与测试在同一程序内启动/结束; spawn 时 stdin 用 pipe(非 tty)以走非交互首启路径,
+    `server/.env` 缺失会触发首启交互向导(stdin 为 tty 时)。
 
 ## 风险 / 注意事项
 
-1. 公网侧不鉴权 → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
+1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
 2. 多 worker 会破坏内存中继; 扩缩容需先做 Redis Pub/Sub 化(未来工作)。
-3. TCP 流为“每公网连接一条”, 不支持半关细粒度之外的复杂语义(对 RDP/SSH/HTTP 足够)。
-4. 客户端不再持有任何本地配置(仅 authtoken JWT; 服务器地址构建时写死, 其余全从服务器读) — 分发场景只需 exe + 网页签发的绑定令牌。
+3. 字节流为"每公网连接一条", 不支持半关等细粒度语义(对 RDP/SSH/HTTP/WS 足够)。
+4. 客户端不持有本地配置(仅绑定令牌; 服务器地址构建时写死)。
+5. WS 桥接不做 permessage-deflate(桥接层无扩展); 浏览器↔内网服务的压缩由各自实现负责。
+
+## Git 提交记录
+
+(本地 commit, 未 push; 本轮 hash 见下一节补记)

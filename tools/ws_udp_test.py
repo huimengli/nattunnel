@@ -18,6 +18,8 @@ import websockets
 T_NEW = 0x01
 T_CLOSE = 0x04
 T_HELLO = 0x05
+
+RELAY_SUBPROTOCOL = "nattunnel-relay"   # 帧协议裸流客户端必须声明的 WS 子协议
 U_DATA = 0x41
 
 
@@ -52,7 +54,7 @@ def time_mono() -> int:
 
 
 async def once(url: str, text: bytes, wait_s: float) -> None:
-    async with websockets.connect(url, max_size=1 << 20) as ws:
+    async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
         pid = await wait_hello(ws)
         print(f"[ok] peer_id={pid}, send: {text!r}", file=sys.stderr)
         await ws.send(build_frame(U_DATA, pid, text))
@@ -72,7 +74,7 @@ async def once(url: str, text: bytes, wait_s: float) -> None:
 
 
 async def interactive(url: str) -> None:
-    async with websockets.connect(url, max_size=1 << 20) as ws:
+    async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
         pid = await wait_hello(ws)
         print(f"[ok] peer_id={pid}; 每行输入发送一个 UDP 数据报 (Ctrl+Z/Ctrl+D 退出)", file=sys.stderr)
         closed = asyncio.Event()

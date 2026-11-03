@@ -25,7 +25,8 @@ class Tunnel(Base):
     tunnel_id: Mapped[str] = mapped_column(String(8), unique=True, index=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(64), default="")
-    proto: Mapped[str] = mapped_column(String(4), default="tcp")  # tcp | udp
+    # 协议: http(浏览器直开短链, 纯 HTTP 直转) | tcp(原生字节流, 支持 WebSocket 握手) | udp(数据报)
+    proto: Mapped[str] = mapped_column(String(4), default="http")
     # “前端端口”: 本机被转发服务监听的端口
     local_port: Mapped[int] = mapped_column(Integer)
     # 本机目标主机: 客户端把隧道流量转发到该主机的 local_port(默认本机回环)

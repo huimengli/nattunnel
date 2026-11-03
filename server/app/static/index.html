@@ -131,6 +131,10 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       </tr></thead>
       <tbody></tbody>
     </table>
+    <p class="muted" style="margin-top:10px">协议(同一入口 <span class="mono">/tunnel/短链</span>, 按<b>连接类型</b>分流; 一条隧道只有一个本地端口):<br>
+      <b>http</b> —— 混合隧道: 浏览器直开短链(逐请求 HTTP 直转 + HTML <base> 注入) + 页面里的 WebSocket(握手桥接到内网服务) + 子协议 <span class="mono">nattunnel-relay</span> 的帧协议裸流(等价 tcp 访问);<br>
+      <b>tcp</b> —— 原生 TCP 字节流: WebSocket 握手桥接(101 与数据帧双向透明) + 子协议裸流; <b>纯 HTTP 请求拒绝(400)</b>;<br>
+      <b>udp</b> —— 仅子协议裸流的数据报(WS 握手拒绝)。浏览器 <span class="mono">new WebSocket()</span> 无法自定义头, 因此"不带子协议的 WS 握手"= 桥接到内网服务。</p>
   </div>
 
   <!-- 客户端接入信息 -->
@@ -168,11 +172,16 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
     <div class="form-grid">
       <div><label>名称(备注)</label><input id="tm-name"></div>
       <div><label>短链 ID(8 位, 留空自动生成)</label><input id="tm-tid" maxlength="8" placeholder="自动"></div>
-      <div><label>协议</label><select id="tm-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></div>
+      <div><label>协议</label><select id="tm-proto" onchange="protoHint()">
+        <option value="http">http (HTTP+WS+裸流: 浏览器直开)</option>
+        <option value="tcp">tcp (字节流: WS 握手 + 裸流)</option>
+        <option value="udp">udp (数据报: 仅裸流)</option>
+      </select></div>
       <div><label>本地端口(前端端口)</label><input id="tm-port" type="number" min="1" max="65535"></div>
       <div><label>本地目标主机</label><input id="tm-host" value="127.0.0.1" placeholder="127.0.0.1"></div>
       <div><label>带宽上限 kbps(0=不限)</label><input id="tm-bw" type="number" min="0" value="0"></div>
     </div>
+    <p class="muted" id="proto-hint" style="margin:6px 0 0"></p>
     <div class="row">
       <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="tm-enabled" type="checkbox" style="width:auto" checked> 启用</label>
       <span class="muted" id="tm-hint"></span>
@@ -368,13 +377,24 @@ function openTunnelModal(tid) {
   const t = state.tunnels.find(x => x.tunnel_id === tid);
   document.getElementById("tm-name").value = t ? (t.name || "") : "";
   document.getElementById("tm-tid").value = t ? t.tunnel_id : "";
-  document.getElementById("tm-proto").value = t ? t.proto : "tcp";
+  document.getElementById("tm-proto").value = t ? t.proto : "http";
+  protoHint();
   document.getElementById("tm-port").value = t ? t.local_port : "";
   document.getElementById("tm-host").value = t ? (t.local_target_host || "127.0.0.1") : "127.0.0.1";
   document.getElementById("tm-bw").value = t ? t.bandwidth_kbps : 0;
   document.getElementById("tm-enabled").checked = t ? !!t.enabled : true;
   document.getElementById("tm-hint").textContent = t && (t.lan_online || t.pub_count) ? "注意: 修改将断开该隧道现有连接" : "";
   showModal("tunnel-modal");
+}
+
+const PROTO_HINT = {
+  "http": "http = 混合隧道: 浏览器直开短链(逐请求直转 + base 注入) + 页面内 WebSocket(握手桥接) + 子协议 nattunnel-relay 裸流。",
+  "tcp": "tcp = 原生字节流: WebSocket 握手桥接到内网服务(101/数据帧双向透明) + 子协议裸流; 纯 HTTP 请求会被拒绝(400)。",
+  "udp": "udp = 数据报: 仅子协议 nattunnel-relay 的帧协议数据报, 无 HTTP/WS 桥接语义。",
+};
+function protoHint() {
+  const el = document.getElementById("proto-hint");
+  if (el) el.textContent = PROTO_HINT[document.getElementById("tm-proto").value] || "";
 }
 
 async function saveTunnel() {
@@ -450,6 +470,7 @@ function baseSnippet(tid) {
     s += "\n\n隧道 " + t.tunnel_id + ": " + t.proto + " -> " +
          (t.local_target_host || "127.0.0.1") + ":" + t.local_port +
          (t.bandwidth_kbps ? "  带宽=" + t.bandwidth_kbps + "kbps" : "  带宽=不限");
+    s += "\n访问方式: " + (PROTO_HINT[t.proto] || "");
   }
   return s;
 }

@@ -2,11 +2,15 @@
 
 角色判定:
   - LAN 侧(客户端 exe): 握手携带有效 Bearer JWT, 且为隧道属主或管理员;
-  - 公网侧: 其余连接(无需鉴权), 每个连接即一条独立流。
+  - 公网侧: 其余连接(无需鉴权), 每个连接即一条流。
 
-同一路径 /tunnel/{tid} 还接受普通 HTTP 请求(无 WebSocket Upgrade):
-http_bridge.HttpBridgeMiddleware 把它转成隧道流直转发到本地服务,
-浏览器可 http/https 直接打开短链。
+同一路径 /tunnel/{tid} 还接受:
+  - 普通 HTTP 请求(无 WebSocket Upgrade): http_bridge.HttpBridgeMiddleware 把它转成隧道流
+    直转发到本地服务(仅 proto=http 隧道), 浏览器可 http/https 直接打开短链;
+  - WebSocket 握手(公网侧, 未声明 nattunnel-relay 子协议): 由桥接层透传到内网 WS 服务
+    (proto=http/tcp), 握手与数据帧双向透明 —— 本中继不参与。
+
+本中继处理的公网侧连接 = 声明 WS 子协议 nattunnel-relay 的"帧协议裸流"客户端。
 """
 import logging
 from contextlib import asynccontextmanager
@@ -20,12 +24,15 @@ from .database import SessionLocal
 from .http_bridge import HttpBridgeMiddleware
 from .models import Tunnel, User
 from .relay import (
+    RELAY_SUBPROTOCOL,
     T_CLOSE,
     T_DATA,
     T_FIN,
     T_HELLO,
     T_NEW,
     U_DATA,
+    alloc_peer,
+    data_type,
     get_redis,
     hub,
     lan_present_key,
@@ -104,9 +111,8 @@ async def _register_lan(room, ws) -> None:
 
 
 async def _register_pub(room, ws) -> int:
-    """注册公网侧: 分配 peer_id, 通知双方。"""
-    pid = room.next_peer
-    room.next_peer += 1
+    """注册公网侧(帧协议裸流): 分配 peer_id, 通知双方。"""
+    pid = alloc_peer(room)
     room.pubs[pid] = ws
     await _send_safe(ws, T_HELLO, pid)
     if room.lan is not None:
@@ -146,16 +152,19 @@ async def tunnel_ws(tid: str, websocket: WebSocket):
             except Exception:
                 pass
 
-        await websocket.accept()
+        # 帧协议裸流客户端(子协议 nattunnel-relay)回填该子协议; 其余连接行为不变
+        subs = websocket.scope.get("subprotocols") or []
+        sub = RELAY_SUBPROTOCOL if RELAY_SUBPROTOCOL in subs else None
+        await websocket.accept(subprotocol=sub)
         if tunnel is None or not tunnel.enabled:
             log.info("tunnel %s: 未找到或已停用 -> close 4004", tid)
             await websocket.close(code=4004)
             return
 
         room = hub.room(tid, tunnel.proto)
-        data_types = {T_DATA} if tunnel.proto == "tcp" else {U_DATA}
+        data_types = {data_type(tunnel.proto)}
         role = "lan" if is_lan else "pub"
-        log.info("tunnel %s: %s connected (role=%s)", tid, websocket.client, role)
+        log.info("tunnel %s: %s connected (role=%s, proto=%s)", tid, websocket.client, role, tunnel.proto)
 
         if is_lan:
             await _register_lan(room, websocket)

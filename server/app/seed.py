@@ -29,6 +29,8 @@ log = logging.getLogger("nattunnel.seed")
 
 DEMO_TUNNEL_ID = "XgMacp2G"
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{2,32}$")
+# 一次性迁移标记(2026-11-03): 原 tcp(浏览器 HTTP 直开短链)语义改名为 http
+_PROTO_MIGRATION_KEY = "proto_tcp_to_http_v1"
 _ENV_PATH = BASE_DIR / ".env"
 
 
@@ -238,6 +240,29 @@ def _interactive_env_setup() -> None:
 
 # ---------------------------------------------------------------- 迁移与初始化
 
+def _migrate_proto_tcp_to_http(db) -> int:
+    """一次性迁移(2026-11-03): 存量 proto=tcp(浏览器 HTTP 直开短链) -> http。
+
+    新 tcp 语义 = 原生 TCP 字节流(支持 WebSocket 握手)。标记写入 AppSetting, 只执行一次,
+    之后用户新建的 tcp 隧道不会再被改写。返回被迁移的隧道数。
+    """
+    from .models import AppSetting
+
+    if db.query(AppSetting).filter_by(key=_PROTO_MIGRATION_KEY).first() is not None:
+        return 0
+    n = db.query(Tunnel).filter(Tunnel.proto == "tcp").update(
+        {Tunnel.proto: "http"}, synchronize_session=False
+    )
+    db.add(AppSetting(
+        key=_PROTO_MIGRATION_KEY,
+        value="2026-11-03: legacy proto=tcp(浏览器 HTTP 直开) -> http; 新 tcp=原生字节流(支持 WS 握手)",
+    ))
+    log.warning(
+        "migration: %d 条存量隧道 proto tcp -> http (原 tcp 语义改名; 新 tcp = 字节流 + WS 握手桥接)", n
+    )
+    return n
+
+
 def _migrate_local_target_host() -> None:
     """存量库幂等迁移: tunnels 表补 local_target_host 列(新建库由 create_all 处理)。"""
     from sqlalchemy import text
@@ -305,6 +330,9 @@ def _seed() -> None:
             admin = _bootstrap_admin(db)
         # 已有管理员则保持现状(不覆盖密码)
 
+        # 协议语义迁移(一次性): 老 tcp -> http, 新 tcp 为原生字节流
+        _migrate_proto_tcp_to_http(db)
+
         demo = db.query(Tunnel).filter_by(tunnel_id=DEMO_TUNNEL_ID).first()
         if demo is None:
             db.flush()
@@ -313,7 +341,7 @@ def _seed() -> None:
                     tunnel_id=DEMO_TUNNEL_ID,
                     owner_id=admin.id,
                     name="demo",
-                    proto="tcp",
+                    proto="tcp",          # 原生字节流(RDP/SSH/WS 等任意 TCP 服务)
                     local_port=3389,
                     bandwidth_kbps=0,
                     enabled=True,

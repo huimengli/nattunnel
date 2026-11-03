@@ -4,10 +4,12 @@
 前置: 服务器已在运行(默认 http://127.0.0.1:8100), 例如:
     cd server && set DATABASE_URL=sqlite:///./selftest.db && ..\\..\\.venv\\Scripts\\python -m uvicorn app.main:app --port 8100
 
-步骤:
-  A. TCP:  本地起 echo 服务 -> 建隧道 -> 真实客户端代码(进程内)建立 lan 侧
-           -> 公网侧 WS 直连 -> 数据往返断言
-  B. UDP:  同上(UDP echo)
+阶段:
+  A. TCP(原生字节流): 本地 echo 服务 + 进程内真实客户端代码建 lan 侧 -> 子协议裸流往返 + 热更新
+  B. UDP: 同上(UDP echo)
+  C. 令牌绑定隧道: 无 tunnel_id 的令牌定位隧道
+  D. 纯 HTTP 直转: http 隧道逐请求直转发 + <base> 注入 + tcp 隧道拒绝(400) + 离线 503
+  E. WebSocket 握手桥接: 内网 WS 服务经隧道拿到 101, 数据帧/子协议/文本帧双向往返(udp 拒绝)
 
 用法(凭据不入库, 从参数或环境变量提供):
     set NATTUNNEL_TEST_PASSWORD=...        (或 --password)
@@ -31,6 +33,8 @@ import nattunnel_client as client  # noqa: E402
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding  # noqa: E402
 import websockets  # noqa: E402
+
+RELAY_SUBPROTOCOL = "nattunnel-relay"   # 帧协议裸流(公网侧)必须声明的 WS 子协议
 
 PASS = []
 FAIL = []
@@ -175,7 +179,7 @@ async def stop_client(task: asyncio.Task) -> None:
 # ------------------------------------------------------------- 各阶段
 
 async def phase_tcp(server: str, token: str) -> None:
-    print(f"\n== 阶段 A: TCP 隧道往返 + 配置热更新 ==")
+    print(f"\n== 阶段 A: TCP(原生字节流) 隧道往返 + 配置热更新 ==")
     echo_server, port = await start_tcp_echo()
     tid = None
     client_task = None
@@ -192,7 +196,7 @@ async def phase_tcp(server: str, token: str) -> None:
             return
 
         url = server.replace("http://", "ws://") + f"/tunnel/{tid}"
-        async with websockets.connect(url, max_size=1 << 20) as ws:
+        async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
             pid = None
             while pid is None:
                 t, p, _ = split_frame(await asyncio.wait_for(ws.recv(), timeout=10))
@@ -225,7 +229,7 @@ async def phase_tcp(server: str, token: str) -> None:
             http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"local_port": port2})
             await asyncio.sleep(0.5)  # 等客户端应用 T_CONFIG
             check("A4 API 已把 local_port 改为 %d" % port2, True)
-            async with websockets.connect(url, max_size=1 << 20) as ws2:
+            async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws2:
                 pid2 = None
                 while pid2 is None:
                     t, p, _ = split_frame(await asyncio.wait_for(ws2.recv(), timeout=10))
@@ -275,7 +279,7 @@ async def phase_udp(server: str, token: str) -> None:
             return
 
         url = server.replace("http://", "ws://") + f"/tunnel/{tid}"
-        async with websockets.connect(url, max_size=1 << 20) as ws:
+        async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
             pid = None
             while pid is None:
                 t, p, _ = split_frame(await asyncio.wait_for(ws.recv(), timeout=10))
@@ -329,7 +333,7 @@ async def phase_bound(server: str, token: str) -> None:
             return
 
         url = server.replace("http://", "ws://") + f"/tunnel/{tid}"
-        async with websockets.connect(url, max_size=1 << 20) as ws:
+        async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
             pid = None
             while pid is None:
                 t, p, _ = split_frame(await asyncio.wait_for(ws.recv(), timeout=10))
@@ -399,7 +403,7 @@ async def phase_http(server: str, token: str) -> None:
     loop = asyncio.get_running_loop()
     try:
         out = http_json(server, "/api/tunnels", method="POST", token=token, body={
-            "name": "selftest-http", "proto": "tcp", "local_port": port,
+            "name": "selftest-http", "proto": "http", "local_port": port,
         })
         tid = out["tunnel_id"]
         client_task = start_client(server, tid, token)
@@ -441,8 +445,20 @@ async def phase_http(server: str, token: str) -> None:
                   f"{status} base={'yes' if expect_base in body else 'no'} "
                   f"CL={cl_val} len={len(body)}")
 
+            # D8: 原生 tcp 隧道不做纯 HTTP 直转(直转语义已归入 http)
+            out_tcp = http_json(server, "/api/tunnels", method="POST", token=token, body={
+                "name": "selftest-tcp-nohttp", "proto": "tcp", "local_port": port,
+            })
+            tid_tcp = out_tcp["tunnel_id"]
+            status, _, body = await loop.run_in_executor(
+                None, lambda: http_raw(server, f"/tunnel/{tid_tcp}/hello"))
+            check("D8 tcp 隧道纯 HTTP 请求 -> 400(直转仅 http 隧道)",
+                  status == 400 and "http" in body.decode("utf-8", "replace"),
+                  f"{status} {body[:80].decode('utf-8', 'replace')}")
+            await delete_tunnel(server, tid_tcp, token)
+
         out = http_json(server, "/api/tunnels", method="POST", token=token, body={
-            "name": "selftest-http-offline", "proto": "tcp", "local_port": port + 1000,
+            "name": "selftest-http-offline", "proto": "http", "local_port": port + 1000,
         })
         tid_offline = out["tunnel_id"]
         status, _, _ = await loop.run_in_executor(
@@ -476,6 +492,116 @@ async def phase_http(server: str, token: str) -> None:
         srv.shutdown()
 
 
+
+# ------------------------------------------------------------- 阶段 E: WS 握手桥接
+
+async def start_ws_echo(subprotocols: list = None) -> tuple:
+    """内网 WebSocket echo 服务(握手 101 + 帧回显)。WS_DEBUG=1 时打印握手细节。"""
+
+    async def echo(ws, *args):
+        async for msg in ws:
+            await ws.send(msg)
+
+    if os.environ.get("WS_DEBUG"):
+        import logging
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+        logging.getLogger("websockets.server").setLevel(logging.DEBUG)
+    server = await websockets.serve(echo, "127.0.0.1", 0, subprotocols=list(subprotocols or []))
+    port = server.sockets[0].getsockname()[1]
+    return server, port
+
+
+async def phase_ws(server: str, token: str) -> None:
+    print(f"\n== 阶段 E: WebSocket 握手桥接(经隧道到达内网 WS 服务) ==")
+    # 内网 WS 服务 A: 不要求子协议; B: 要求子协议 chat(用于协商回带)
+    ws_a, port_a = await start_ws_echo([])
+    ws_b, port_b = await start_ws_echo(["chat"])
+    loop = asyncio.get_running_loop()
+    tid = None
+    tid_http = None
+    tid_udp = None
+    client_task = None
+    try:
+        # --- E1/E2/E3: tcp 隧道(原生字节流)上的 WS 握手与数据往返 ---
+        out = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-ws-tcp", "proto": "tcp", "local_port": port_a,
+        })
+        tid = out["tunnel_id"]
+        client_task = start_client(server, tid, token)
+        online = await wait_lan_online(server, tid, token)
+        check("E1 tcp 隧道 lan 侧上线", online)
+        if not online:
+            return
+
+        url = server.replace("http://", "ws://") + f"/tunnel/{tid}/ws"
+        async with websockets.connect(url, max_size=1 << 20) as ws:
+            check("E2 tcp 隧道 WS 握手到达内网 WS 服务(101, 无子协议)",
+                  ws.subprotocol is None, repr(ws.subprotocol))
+            await ws.send(b"ws-over-tcp")
+            reply = await asyncio.wait_for(ws.recv(), timeout=10)
+            check("E3 tcp 隧道 WS 数据帧往返 (echo)", reply == b"ws-over-tcp", repr(reply))
+
+        # --- E4/E5: 热改 local_port 到"要求子协议"的内网服务, 协商结果原样回带 + 文本帧 ---
+        http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"local_port": port_b})
+        await asyncio.sleep(1.0)
+        async with websockets.connect(url, max_size=1 << 20, subprotocols=["chat"]) as ws2:
+            check("E4 WS 子协议协商回带 (chat)", ws2.subprotocol == "chat", repr(ws2.subprotocol))
+            await ws2.send("text-echo")
+            reply2 = await asyncio.wait_for(ws2.recv(), timeout=10)
+            check("E5 WS 文本帧往返 (echo)", reply2 == "text-echo", repr(reply2))
+
+        # --- E6/E7: http 隧道同样桥接 WS 握手(页面里的 WebSocket 可用) ---
+        out2 = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-ws-http", "proto": "http", "local_port": port_a,
+        })
+        tid_http = out2["tunnel_id"]
+        await stop_client(client_task)
+        client_task = start_client(server, tid_http, token)
+        online2 = await wait_lan_online(server, tid_http, token)
+        check("E6 http 隧道 lan 侧上线", online2)
+        if online2:
+            url2 = server.replace("http://", "ws://") + f"/tunnel/{tid_http}/ws"
+            async with websockets.connect(url2, max_size=1 << 20) as ws3:
+                await ws3.send(b"http-ws-probe")
+                reply3 = await asyncio.wait_for(ws3.recv(), timeout=10)
+                check("E7 http 隧道 WS 握手桥接 (echo)", reply3 == b"http-ws-probe", repr(reply3))
+            # E8: 同一 http 隧道的纯 HTTP 直转仍工作(内网 WS 服务对非 WS 请求回 400)
+            status, _, body = await loop.run_in_executor(
+                None, lambda: http_raw(server, f"/tunnel/{tid_http}/hello"))
+            check("E8 http 隧道纯 HTTP 直转仍可达内网(WS 服务对非 WS 请求回 400/426)",
+                  status in (400, 426), f"{status} {body[:60].decode('utf-8', 'replace')}")
+
+        # --- E9: udp 隧道无 WS 桥接语义 -> 握手被拒 ---
+        out3 = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-ws-udp", "proto": "udp", "local_port": port_a,
+        })
+        tid_udp = out3["tunnel_id"]
+        await stop_client(client_task)
+        client_task = start_client(server, tid_udp, token)
+        online3 = await wait_lan_online(server, tid_udp, token)
+        if not online3:
+            check("E9 udp 隧道 WS 握手被拒(客户端未上线)", False)
+            return
+        url3 = server.replace("http://", "ws://") + f"/tunnel/{tid_udp}/ws"
+        base3 = server.replace("http://", "ws://") + f"/tunnel/{tid_udp}"
+        try:
+            async with websockets.connect(url3, max_size=1 << 20) as ws4:
+                check("E9 udp 隧道 WS 握手应被拒", False, "握手意外成功")
+        except websockets.exceptions.InvalidStatus as e:
+            code = getattr(e.response, "status_code", None) or getattr(e, "status_code", None)
+            check("E9 udp 隧道 WS 握手被拒(非 101)", code == 400, f"status={code}")
+        # E10: udp 隧道声明子协议后仍是帧协议裸流(HELLO)
+        async with websockets.connect(base3, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws5:
+            t_, p_, _ = split_frame(await asyncio.wait_for(ws5.recv(), timeout=10))
+            check("E10 udp 隧道子协议裸流仍走中继(HELLO)", t_ == 0x05, f"type={t_}")
+    finally:
+        if client_task is not None:
+            await stop_client(client_task)
+        for t_del in (tid, tid_http, tid_udp):
+            await delete_tunnel(server, t_del, token)
+        ws_a.close()
+        ws_b.close()
+
 # ------------------------------------------------------------- main
 
 async def main() -> None:
@@ -503,6 +629,7 @@ async def main() -> None:
     await phase_udp(server, token)
     await phase_bound(server, token)
     await phase_http(server, token)
+    await phase_ws(server, token)
 
     print(f"\n结果: {len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

@@ -13,18 +13,43 @@
 ```
 
 - **客户端** `client/nattunnel_client.py`(可打包 exe): 携带 authtoken(JWT, `-a` 参数或控制台输入)
-  → 握手拉取隧道配置(前端端口 / 本地目标主机 / tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`;
+  → 握手拉取隧道配置(前端端口 / 本地目标主机 / http|tcp|udp / 带宽上限) → 出站 WS 建隧, 转发本机 `<local_target_host>:<local_port>`;
   服务端改配置后经 `T_CONFIG` 帧**热更新**(端口/带宽即生效, 协议变更自动重连);
   exe 图标取自仓库根 `favicon.ico`(build.bat 构建时经 `--icon` 打进 exe)。
 - **后端** `server/`: FastAPI + MySQL(SQLAlchemy) + Redis, JWT 鉴权, RSA 公钥下发, `/tunnel/{id}` WebSocket 中继。
 - **公网侧**无需装任何东西: 任何支持 WS 的二进制客户端连 `wss://www.xxx.com/tunnel/<ID>` 即可;
   仓库自带测试工具 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py`。
-- **浏览器直开(tcp 隧道)**: 同一路径 `/tunnel/<ID>` 同时接受普通 HTTP/HTTPS 请求 ——
-  服务端把请求经隧道直转发到本地服务并按流回传, 浏览器打开短链即可访问内网的 Web 应用;
-  udp 隧道仅支持 WS。
+- **浏览器直开(http 隧道)**: 同一路径 `/tunnel/<ID>` 也接受普通 HTTP/HTTPS 请求 ——
+  服务端把请求经隧道逐请求直转发到本地服务并按流回传, 浏览器打开短链即可访问内网的 Web 应用;
+- **WebSocket 握手桥接(http/tcp 隧道)**: 不带 `nattunnel-relay` 子协议的 WS 握手被透传到内网服务
+  (浏览器页面里的 `new WebSocket()` 可用), `101` 与数据帧双向透明;
+  `Sec-WebSocket-Key` 原样转发(桥接层用同一个 key 对浏览器完成握手, `Accept` 值一致),
+  `Sec-WebSocket-Protocol` 按内网协商结果回带; `Sec-WebSocket-Extensions` 剥掉(桥接层不做 permessage-deflate);
+- **帧协议裸流(子协议 `nattunnel-relay`)**: 公网侧声明该子协议即走中继裸流(RDP/任意 TCP 服务/UDP 数据报),
+  仓库自带 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py` / `tools/ws_handshake_test.py`。
 - **HTML `<base>` 注入**: 对 text/html 响应在 `<head>` 后注入 `<base href="/tunnel/<ID>/">`,
   把相对引用(CSS/JS/图标, 含 JS 运行时 fetch)钉在隧道前缀内 — 子路径部署的 Web 应用(liteLLM/llama.cpp UI 等)
   浏览器开箱即用; gzip/chunked 的 HTML 不做注入(此类应用需自身支持子路径或改用 WS 客户端)。
+
+## 隧道协议(http / tcp / udp, 2026-11-03)
+
+一条隧道 = 一个"前端端口"(`local_port` + `local_target_host`), 公网入口 `/tunnel/<短链>` **按连接类型分流**:
+
+| 公网侧连接 | proto=http | proto=tcp | proto=udp |
+|---|---|---|---|
+| WS + 有效 Bearer JWT(属主/admin) | LAN 侧(exe) | 同 | 同 |
+| WS + 子协议 `nattunnel-relay`(帧协议裸流) | ✅ 字节流(等价 tcp) | ✅ 字节流 | ✅ 数据报 |
+| WS 握手(无该子协议, 浏览器式) | ✅ 桥接到内网 WS 服务 | ✅ 桥接 | ❌ 拒绝(400) |
+| 纯 HTTP 请求(无 Upgrade) | ✅ 逐请求直转 + `<base>` 注入 | ❌ 400 | ❌ 400 |
+
+- **http = 混合隧道**: 浏览器直开 + 页面内 WebSocket + 子协议裸流三种入口共存(同一端口, 无需建第二条隧道);
+- **tcp = 原生字节流**: WebSocket 握手与数据帧透传到内网服务(101 双向透明) + 子协议裸流; 纯 HTTP 直转语义已归入 `http`;
+- **udp**: 仅子协议裸流的数据报(无连接语义, 无 HTTP/WS 桥接);
+- 浏览器 `new WebSocket()` **无法自定义头/子协议以外的头**, 因此"不带 `nattunnel-relay` 的 WS 握手"= 桥接;
+  裸流工具(websockets 库)必须显式声明 `subprotocols=["nattunnel-relay"]`;
+- 存量 `proto=tcp`(原浏览器直开语义)在首次启动时**一次性**迁移为 `http`(`AppSetting` 记标记),
+  迁移后新建的 `tcp` 隧道按新语义(字节流)工作, 不会再被改写;
+- `tcp+udp` 同端口双栈混合(客户端对同一端口同时建 TCP/UDP 通道)未实现 —— 需要改客户端流模型与中继, 暂列为后续需求。
 
 ## 管理员账号(启动时初始化, 代码无硬编码凭据)
 
@@ -37,7 +62,7 @@
 
 | 项 | 值 |
 |---|---|
-| 示例隧道短链 | `XgMacp2G` (tcp, 本机端口 3389, 不限速, 可删) |
+| 示例隧道短链 | `XgMacp2G` (tcp=原生字节流, 本机端口 3389, 不限速, 可删) |
 
 ## 快速开始(服务器端)
 
@@ -137,22 +162,23 @@ build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 | GET | `/api/tunnels` | 我的隧道(admin 全部), 含 `lan_online`/`pub_count` |
 | POST | `/api/tunnels` | 建隧道 `{tunnel_id?(8位), name?, proto, local_port, bandwidth_kbps?}` |
 | GET/PATCH/DELETE | `/api/tunnels/{tid}` | 读/改(端口、协议、带宽、启用)/删 |
-| WS | `/tunnel/{tid}` | Bearer JWT 且属主/admin = LAN 侧; 否则公网侧(每条连接一条流) |
-| HTTP | `/tunnel/{tid}[/子路径]` | 纯 HTTP 直转(tcp 隧道): 浏览器直接打开短链访问内网 Web 服务; 无 LAN 在线 → 503 |
+| WS | `/tunnel/{tid}` | Bearer JWT 且属主/admin = LAN 侧; 子协议 `nattunnel-relay` = 帧协议裸流(每条连接一条流); 其余 WS 握手由桥接层透传到内网 WS 服务(http/tcp 隧道) |
+| HTTP | `/tunnel/{tid}[/子路径]` | 纯 HTTP 直转(**仅 http 隧道**): 浏览器直接打开短链访问内网 Web 服务; tcp/udp 隧道 → 400; 无 LAN 在线 → 503 |
 
 ## 隧道帧协议(WS 二进制消息, 统一 5 字节头 `[type][peer_id BE32]`)
 
 | type | 含义 |
 |---|---|
 | `0x01` NEW_STREAM | server→LAN: 公网对端(pid)已连接, 请建立本地连接 |
-| `0x02` DATA | TCP 字节流(双向, 按 pid 路由) |
+| `0x02` DATA | 字节流(http/tcp, 双向, 按 pid 路由) |
 | `0x03` FIN | 流结束(半关) |
 | `0x04` CLOSE | 流拆除 |
 | `0x05` HELLO | server→公网侧: 分配 peer_id |
 | `0x21` CONFIG | server→LAN: 配置热更新 JSON `{proto, local_port, bandwidth_kbps}` |
 | `0x41` DATA(UDP) | UDP 数据报(双向, 按 pid 路由) |
 
-- TCP: 每个公网 WS 连接 = 一条流; LAN 侧收到 NEW_STREAM 后 connect `<local_target_host>:<local_port>`。
+- 字节流(http/tcp): 每个子协议裸流连接 = 一条流; LAN 侧收到 NEW_STREAM 后 connect `<local_target_host>:<local_port>`;
+  `http`/`tcp` 隧道的 WS 握手桥接复用同一套字节流语义(桥接层做 HTTP/WS 语义, 客户端只做管道)。
 - UDP: 每个公网 WS 连接 = 一个对端; LAN 侧为该对端起 127.0.0.1 临时 socket, 数据报经隧道发到本机服务端口。
 - 带宽: `bandwidth_kbps`(0=不限)由客户端令牌桶执行, 双向共用。
 
@@ -166,6 +192,13 @@ cd server && DATABASE_URL="sqlite:///./selftest.db" \
 # 2) 另一终端(测试凭据走参数/环境变量, 不入库)
 NATTUNNEL_TEST_PASSWORD=dev-only-12345 python tools/selftest.py --server http://127.0.0.1:8100
 python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.0.1:8100
+
+# selftest 阶段: A=TCP 原生字节流+热更新; B=UDP; C=令牌绑定隧道; D=纯 HTTP 直转(http 隧道)+tcp 拒绝;
+#              E=WebSocket 握手桥接(内网 WS 服务经隧道 101/数据帧/子协议/文本帧往返, udp 拒绝)
+# 公网侧(有真实服务器时)手工验证:
+python tools/ws_handshake_test.py wss://www.xxx.com/tunnel/<ID>/ws --send ping --sub chat
+python tools/ws_tcp_test.py wss://www.xxx.com/tunnel/<ID>          # 子协议 nattunnel-relay 裸流
+python tools/ws_udp_test.py wss://www.xxx.com/tunnel/<ID> --send ping
 ```
 
 ## 目录结构
@@ -179,6 +212,10 @@ python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.
   `/api/login` 仍保留双通道(JSON / RSA 加密报文)供 API 侧登录 —— **都依赖 TLS**, 务必为域名配置 443。
 - 登录报文可经 RSA(2048) 公钥加密; JWT 默认 7 天有效, 密钥可经 `.env` 或自动持久化。
 - 公网侧入口本身不鉴权 —— **务必为 `www.xxx.com` 配置 TLS(443)**, 否则数据明文过网。
+- WS 握手桥接使内网 WS 服务可被浏览器**免认证直接连入**(公网侧无鉴权): 与纯 HTTP 直转同样,
+  自身无鉴权的 WS 服务应放在可信网络内或另行加防护;
+- 子协议 `nattunnel-relay` 裸流让任意 TCP/UDP 客户端(能写 WS 帧)直连内网端口 —— 该入口**不鉴权**,
+  敏感端口请配合服务器防火墙/IP 白名单;
 - 纯 HTTP 直转使内网 Web 服务可被浏览器**免认证直接访问**: 若该服务自身无登录/鉴权,
   请放在可信网络内或另行加防护(网关鉴权、IP 白名单等)。
 - 隧道 8 位短链可被猜到: 敏感业务请配合服务器防火墙限制源 IP, 或定期轮换 `tunnel_id`。

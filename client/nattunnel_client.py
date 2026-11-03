@@ -15,13 +15,18 @@ nattunnel 客户端 — 将无公网IP电脑的本地端口经服务器隧道映
 流程:
   1) GET /api/me                  校验 authtoken(JWT), 取绑定隧道 ID
   2) GET /api/tunnels/{id}        握手拉取端口/协议/带宽/目标主机配置
-  3) WS  /tunnel/{id} (Bearer)    建立隧道, 按帧协议转发 TCP/UDP
+  3) WS  /tunnel/{id} (Bearer)    建立隧道, 按帧协议转发字节流(http/tcp)或数据报(udp)
   4) T_CONFIG 热更新: 服务端改配置后实时下发(端口/带宽/目标主机即生效, 协议变更自动重连)
 
 帧格式(与后端一致): [type 1B][peer_id 4B BE][payload]
-  0x01 NEW_STREAM(server->lan)  0x02 DATA(tcp)  0x03 FIN  0x04 CLOSE
+  0x01 NEW_STREAM(server->lan)  0x02 DATA(字节流)  0x03 FIN  0x04 CLOSE
   0x05 HELLO(server->pub)       0x21 CONFIG(server->lan, JSON)
   0x41 DATA(udp)
+
+隧道协议(服务器端选择):
+  http —— 浏览器直开短链的纯 HTTP 直转: 本客户端仍按"字节流"转发(每请求一条流);
+  tcp  —— 原生 TCP 字节流: 公网侧 WS 握手与数据帧经桥接层透传, 本客户端做双向字节管道;
+  udp  —— UDP 数据报。
 
 构建 exe:  build.bat [-s <server>] (PyInstaller --onefile)
 """
@@ -213,7 +218,10 @@ async def run_tcp(ws, tcfg: dict, bucket: TokenBucket):
     open_tasks = {}   # pid -> 正在建连的 task(用于 T_DATA 早到的竞态)
 
     def apply_config(new: dict) -> bool:
-        """应用服务端下发的配置; 返回 True 表示协议变更需重建会话。"""
+        """应用服务端下发的配置; 返回 True 表示协议变更需重建会话。
+
+        本会话服务 http/tcp 两种协议(都是字节流), 只有切到 udp 才需要重连。
+        """
         if "local_port" in new and int(new["local_port"]) != live["port"]:
             log.info("本地端口热更新: %s -> %s (新流生效)", live["port"], int(new["local_port"]))
             live["port"] = int(new["local_port"])
@@ -223,7 +231,7 @@ async def run_tcp(ws, tcfg: dict, bucket: TokenBucket):
         if "bandwidth_kbps" in new:
             bucket.set_bandwidth(int(new["bandwidth_kbps"]))
             log.info("带宽热更新: %skbps", int(new["bandwidth_kbps"]))
-        if new.get("proto") and new["proto"] != "tcp":
+        if new.get("proto") and new["proto"] not in ("tcp", "http"):
             return True
         return False
 
@@ -479,7 +487,8 @@ async def run(cfg: Config, token: str, tid: str) -> None:
             ) as ws:
                 log.info("隧道已建立: %s", url)
                 backoff = 1.0
-                if proto == "tcp":
+                # http 与 tcp 都是字节流(桥接层做 HTTP/WS 语义), 只有 udp 走数据报
+                if proto in ("tcp", "http"):
                     await run_tcp(ws, tcfg, bucket)
                 else:
                     await run_udp(ws, tcfg, bucket)

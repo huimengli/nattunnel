@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """管理员/用户 API 巡检(对已运行的服务器)。
 
-覆盖: RSA 登录、me、改密码、建用户、非管理员越权检查、建隧道、改配置、列表、清理。
+覆盖: RSA 登录、me、改密码、建用户、非管理员越权检查、建隧道(http/tcp/udp 取值与改配置)、列表、清理。
     python tools/api_check.py [--server http://127.0.0.1:8100]
     # 凭据从参数或环境变量 NATTUNNEL_TEST_USER / NATTUNNEL_TEST_PASSWORD 提供(不入库)
 """
@@ -95,6 +95,24 @@ def main() -> None:
                   body={"name": "api-check", "proto": "udp", "local_port": 9000, "bandwidth_kbps": 100})
     print("[PASS] 建隧道:", tunnel["tunnel_id"], tunnel["proto"], tunnel["local_port"], f"{tunnel['bandwidth_kbps']}kbps")
 
+    # 协议取值: http/tcp/udp 可用; 其他(如 ws)拒绝 422; 协议可 PATCH 热改(房间被拆, 客户端重连)
+    hp = http(server, "/api/tunnels", method="POST", token=tok2,
+              body={"name": "api-check-proto", "proto": "http", "local_port": 9200})
+    assert hp["proto"] == "http", hp
+    print("[PASS] 建隧道 proto=http:", hp["tunnel_id"])
+    try:
+        http(server, "/api/tunnels", method="POST", token=tok2,
+             body={"name": "api-check-badproto", "proto": "ws", "local_port": 9200})
+        print("[FAIL] 非法协议 proto=ws 应被拒绝(422)")
+        sys.exit(1)
+    except urllib.error.HTTPError as e:
+        assert e.code == 422, f"期望 422, 实际 {e.code}"
+        print("[PASS] 非法协议 proto=ws -> 422")
+    patched_proto = http(server, f"/api/tunnels/{hp['tunnel_id']}", method="PATCH", token=tok2,
+                         body={"proto": "tcp"})
+    assert patched_proto["proto"] == "tcp", patched_proto
+    print("[PASS] PATCH proto http -> tcp")
+
     patched = http(server, f"/api/tunnels/{tunnel['tunnel_id']}", method="PATCH", token=tok2,
                    body={"bandwidth_kbps": 256, "enabled": False})
     assert patched["bandwidth_kbps"] == 256 and patched["enabled"] is False
@@ -113,9 +131,9 @@ def main() -> None:
     http(server, f"/api/tunnels/{tunnel['tunnel_id']}/token", method="POST", token=tok)
     print("[PASS] 管理员亦可为任意隧道签发绑定令牌")
 
-    # 纯 HTTP 直转: 无 LAN 在线的 tcp 隧道 -> 503
+    # 纯 HTTP 直转: 无 LAN 在线的 http 隧道 -> 503(直转语义归入 http 协议)
     ht = http(server, "/api/tunnels", method="POST", token=tok2,
-              body={"name": "api-check-http", "proto": "tcp", "local_port": 9100})
+              body={"name": "api-check-http", "proto": "http", "local_port": 9100})
     try:
         urllib.request.urlopen(server + f"/tunnel/{ht['tunnel_id']}/", timeout=10)
         print("[FAIL] HTTP 直转在 LAN 离线时应返回 503")
@@ -138,6 +156,9 @@ def main() -> None:
 
     # 清理: 删隧道 + 删临时用户(管理员)
     req = urllib.request.Request(server + f"/api/tunnels/{tunnel['tunnel_id']}", method="DELETE")
+    req.add_header("Authorization", f"Bearer {tok}")
+    urllib.request.urlopen(req, timeout=15)
+    req = urllib.request.Request(server + f"/api/tunnels/{hp['tunnel_id']}", method="DELETE")
     req.add_header("Authorization", f"Bearer {tok}")
     urllib.request.urlopen(req, timeout=15)
     req = urllib.request.Request(server + f"/api/tunnels/{ht['tunnel_id']}", method="DELETE")

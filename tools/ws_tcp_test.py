@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """公网侧 TCP 隧道测试工具(扮演互联网用户)。
 
-连接 wss://www.xxx.com/tunnel/<ID>, 将 stdin/stdout 与该隧道双向转发:
+连接 wss://www.xxx.com/tunnel/<ID>(WS 子协议 nattunnel-relay = 帧协议裸流), 将 stdin/stdout 与该隧道双向转发:
+
+注: 公网侧 WS 握手若**不声明** nattunnel-relay, 会被桥接到内网的 WS 服务(隧道协议 tcp/http);
+    本工具扮演"帧协议裸流"客户端, 必须声明该子协议。
 
     python tools/ws_tcp_test.py wss://www.xxx.com/tunnel/XgMacp2G
     # 例如测试远端 RDP/任意 TCP 服务时, 也可用 nc 经 ws 桥接
@@ -21,6 +24,8 @@ T_FIN = 0x03
 T_CLOSE = 0x04
 T_HELLO = 0x05
 
+RELAY_SUBPROTOCOL = "nattunnel-relay"   # 帧协议裸流客户端必须声明的 WS 子协议
+
 
 def build_frame(type_, peer_id, payload=b""):
     return bytes([type_]) + peer_id.to_bytes(4, "big") + payload
@@ -37,7 +42,7 @@ async def main() -> None:
     parser.add_argument("url", help="wss://www.xxx.com/tunnel/<ID>")
     args = parser.parse_args()
 
-    async with websockets.connect(args.url, max_size=1 << 20) as ws:
+    async with websockets.connect(args.url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
         # 等待服务器分配 peer_id
         pid = None
         while pid is None:

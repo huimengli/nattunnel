@@ -44,7 +44,8 @@ class TunnelCreate(BaseModel):
         description="8 位短链; 不填则自动生成",
     )
     name: str = Field(default="", max_length=64)
-    proto: str = Field(default="tcp", pattern=r"^(tcp|udp)$")
+    proto: str = Field(default="http", pattern=r"^(http|tcp|udp)$",
+        description="http=浏览器直开短链(纯 HTTP 直转); tcp=原生字节流(支持 WebSocket 握手); udp=数据报")
     local_port: int = Field(..., ge=1, le=65535)
     # 本机目标主机(客户端转发流量的对端), 默认回环
     local_target_host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
@@ -53,7 +54,7 @@ class TunnelCreate(BaseModel):
 
 class TunnelUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=64)
-    proto: Optional[str] = Field(default=None, pattern=r"^(tcp|udp)$")
+    proto: Optional[str] = Field(default=None, pattern=r"^(http|tcp|udp)$")
     local_port: Optional[int] = Field(default=None, ge=1, le=65535)
     local_target_host: Optional[str] = Field(default=None, min_length=1, max_length=255)
     bandwidth_kbps: Optional[int] = Field(default=None, ge=0)
