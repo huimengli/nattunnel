@@ -99,4 +99,8 @@
 
 ## Git 提交记录
 
-(本地 commit, 未 push; 本轮 hash 见下一节补记)
+| hash | 类型 | 说明 | 状态 |
+|---|---|---|---|
+| `5e3c7fd` | feat(AI) | 隧道协议改为 http/tcp/udp, 新 tcp 支持 WebSocket 握手桥接(20 轮全 PASS) | **已本地 commit, 未 push** |
+
+(历史提交见 `git log`; 本表自 2026-11-03 起记录本地 commit hash。)
