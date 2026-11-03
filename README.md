@@ -26,7 +26,7 @@
   `Sec-WebSocket-Key` 原样转发(桥接层用同一个 key 对浏览器完成握手, `Accept` 值一致),
   `Sec-WebSocket-Protocol` 按内网协商结果回带; `Sec-WebSocket-Extensions` 剥掉(桥接层不做 permessage-deflate);
 - **帧协议裸流(子协议 `nattunnel-relay`)**: 公网侧声明该子协议即走中继裸流(RDP/任意 TCP 服务/UDP 数据报),
-  仓库自带 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py` / `tools/ws_handshake_test.py`。
+  仓库自带 `tools/ws_tcp_test.py` / `tools/ws_udp_test.py` / `tools/ws_handshake_test.py` / `tools/exe_e2e_test.py`。
 - **HTML `<base>` 注入**: 对 text/html 响应在 `<head>` 后注入 `<base href="/tunnel/<ID>/">`,
   把相对引用(CSS/JS/图标, 含 JS 运行时 fetch)钉在隧道前缀内 — 子路径部署的 Web 应用(liteLLM/llama.cpp UI 等)
   浏览器开箱即用; gzip/chunked 的 HTML 不做注入(此类应用需自身支持子路径或改用 WS 客户端)。
@@ -50,6 +50,9 @@
 - 存量 `proto=tcp`(原浏览器直开语义)在首次启动时**一次性**迁移为 `http`(`AppSetting` 记标记),
   迁移后新建的 `tcp` 隧道按新语义(字节流)工作, 不会再被改写;
 - `tcp+udp` 同端口双栈混合(客户端对同一端口同时建 TCP/UDP 通道)未实现 —— 需要改客户端流模型与中继, 暂列为后续需求。
+- **客户端 exe 必须是 2026-11-03 之后的构建**: 旧构建的判定是 `proto == "tcp"`, 迁移后的 `http` 隧道会落到
+  UDP 分支(数据面直接失效, WS 桥接得到 504)。重编译: `client\build.bat -s <服务器地址>`(自动同步唯一副本
+  `server/app/static/nattunnel-client.exe`)。用 `tools/exe_e2e_test.py` 实测过新 exe(http/tcp 全通)与旧 exe(不兼容)。
 
 ## 管理员账号(启动时初始化, 代码无硬编码凭据)
 
@@ -201,6 +204,11 @@ python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.
 python tools/ws_handshake_test.py wss://www.xxx.com/tunnel/<ID>/ws --send ping --sub chat
 python tools/ws_tcp_test.py wss://www.xxx.com/tunnel/<ID>          # 子协议 nattunnel-relay 裸流
 python tools/ws_udp_test.py wss://www.xxx.com/tunnel/<ID> --send ping
+
+# exe 端到端验收(真实构建产物 client/dist/nattunnel-client.exe, 服务器需在跑)
+python tools/exe_e2e_test.py --server http://127.0.0.1:8100 --password dev-only-12345 [--old-exe <旧构建路径>]
+#   X1-X3 新 exe 以 tcp 隧道: 上线 + WS 桥接 echo; X4-X7 以 http(混合): 纯 HTTP 直转 + 热更新后 WS 桥接;
+#   X8-X10 旧 exe 对 http 隧道: 控制面可上线, 数据面走 udp 分支 -> WS 桥接 504(证明必须换新构建)
 ```
 
 ## 目录结构

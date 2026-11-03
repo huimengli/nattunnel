@@ -1,0 +1,9 @@
+# record_24.md — 第 24 轮 (exe 端到端验收: tools/exe_e2e_test.py, 真实构建产物 + 新旧 exe 对比)
+
+- 时间: 2026-11-03T12:13:10.861Z (本地 2026/11/3 20:13:10)
+- 场景: 新 exe(client/dist/nattunnel-client.exe, 2026-11-03 19:56 构建; PyInstaller 6.1.0 + cryptography 50.0.2 + websockets 17.4) 用 -s 覆盖到本地 sqlite 服务器:8100; 内网 WS echo + HTTP 服务在测试进程内; 旧 exe 从 git 提取(11531717 B, 2026-11-03 13:03 构建)做对比; 子进程 TEMP/TMP 指向仓库内目录(本沙箱系统 TEMP 不可写, --onefile 解包需要)
+- 期望: X1-X3 新 exe 以 tcp 隧道上线且 WS 桥接 echo + 日志走字节流; X4-X7 新 exe 以 http(混合)隧道: 纯 HTTP 直转(浏览器语义) + 热更新 local_port 后 WS 桥接 echo; X8-X10 旧 exe 对 http 隧道控制面可上线但数据面走 udp 分支(WS 桥接 504)
+- 实际: exit=0; 断言 10 项: [PASS] X1 exe(tcp ����) lan_online | [PASS] X2 exe tcp ���� WS �Ž� echo 'exe-e2e-1' | [PASS] X3 exe ��־���ֽ���(�� udp ��֧) O] �����ѽ���: ws://127.0.0.1:8100/tunnel/sU8u6rAg / 2026-11-03 20:13:15 [INFO] stream 1 opened -> 127.0.0.1:14254 / | [PASS] X4 exe(http ����) lan_online | [PASS] X5 exe http ������ HTTP ֱת(���������) 200 {'ok': True, 'path': '/hello?a=1'} | [PASS] X6 exe http ����(���) WS �Ž� echo 'exe-http-ws' | [PASS] X7 exe ��־���ֽ���(http Ҳ�� run_tcp) s / 2026-11-03 20:13:19 [INFO] stream 2 opened -> 127.0.0.1:14254 / 2026-11-03 20:13:19 [INFO] stream 2 closed / | [PASS] X8 �� exe �����������(WS ����/�ȸ��²���) | [PASS] X9 �� exe �� http �����޷����ֽ����Ž�(�����治����) echo_ok=False | [PASS] X10 �� exe �� http �� udp ��֧(�� stream ��) 00/tunnel/je4ydWat / 2026-11-03 20:13:23 [INFO] udp peer 1 bound 127.0.0.1:59770 -> 127.0.0.1:14254 /
+        服务器桥接日志: 2026-11-03 20:13:19,819 INFO nattunnel.bridge: ws bridge FxzQ33jR/ws: 101 (peer_id=2, subprotocol=None, target=127.0.0.1:14254) || INFO:     127.0.0.1:14304 - "WebSocket /tunnel/je4ydWat/ws" 504 || INFO:     connection rejected (504 Gateway Timeout)
+- 结果: PASS
+- 备注: 新 exe 语义成立; 旧 exe 对迁移后的 http 隧道不兼容(必须换新构建)

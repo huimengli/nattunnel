@@ -67,7 +67,12 @@
 9. **WS 桥接路径语义**: 裸流(子协议 nattunnel-relay)必须连裸路径 `/tunnel/<ID>`; 带子路径(如 `/tunnel/<ID>/ws`)不匹配 FastAPI 路由,
    uvicorn 以 403 拒绝握手。用 `websocket.http.response` 预拒绝时 uvicorn 会打
    `ASGI callable returned without completing handshake` — 属正常表征(客户端得到 HTTP 响应)。
-10. **spawn 子进程随 run_code 进程退出即被杀**: 服务器必须与测试在同一程序内启动/结束; spawn 时 stdin 用 pipe(非 tty)以走非交互首启路径,
+10. **PyInstaller --onefile 需要可写的系统 TEMP**: 受限环境(本沙箱)报 `Cannot create temporary directory!`;
+    给子进程设 TEMP/TMP 到仓库内目录即可(`tools/exe_e2e_test.py` 已内置)。
+11. **pip 直连 pypi 本机仅 17 kB/s 且 resolver 会回退到 pyinstaller 4.x**: 用 Tsinghua 镜像 + 固定版本
+    (`pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller==6.1.0 ...`, 91s 完成);
+    `run_code` 的 `process.env` 是空的(无 TEMP/USERPROFILE/SystemRoot), spawn 子进程时需自行补齐。
+12. **spawn 子进程随 run_code 进程退出即被杀**: 服务器必须与测试在同一程序内启动/结束; spawn 时 stdin 用 pipe(非 tty)以走非交互首启路径,
     `server/.env` 缺失会触发首启交互向导(stdin 为 tty 时)。
 ## 风险 / 注意事项
 1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。

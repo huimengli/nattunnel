@@ -40,3 +40,17 @@
   => uvicorn 计算的 `Sec-WebSocket-Accept` 与内网服务一致, 浏览器校验通过。
 - 方案A(用户 2026-11-03 拍板): 不新增 mixed 协议; `http` 即混合(HTTP 直开 + WS 桥接 + 子协议裸流);
   `tcp+udp` 同端口双栈混合未实现(需改客户端流模型与中继), 列为后续需求。
+
+## 追加: exe 端到端验收(第 21-26 轮, 2026-11-03 19:56 – 20:14)
+
+- 场景: 用 `client/build.bat` 同参数重编译 exe(PyInstaller 6.1.0 + cryptography 50.0.2 + websockets 17.4, 13.79 MB),
+  以 `-s` 覆盖到本地 sqlite 服务器; 内网 WS echo + HTTP 服务在测试进程内; 工具 `tools/exe_e2e_test.py`(新增, 已入库)。
+- 新 exe(X1-X7) 全 PASS: `tcp` 隧道上线 + WS 桥接 echo + 日志走字节流; `http`(混合)隧道纯 HTTP 直转(200, path 透传)
+  + `PATCH local_port` 热更新后 WS 桥接 echo;
+- 旧 exe(X8-X10, 从 git 提取 2026-11-03 13:03 构建) 全 PASS: 控制面可上线(WS 连接/热更新不变), 但对 `http` 隧道
+  走 UDP 分支(`udp peer 1 bound …`), 无 stream 打开 → 公网 WS 桥接被拒 **504 Gateway Timeout**。
+  => **结论: exe 必须重新编译**(`proto == "tcp"` 判定会让迁移后的 `http` 隧道落到 UDP 数据面)。
+- 21-23 轮 FAIL 的真实原因: `tools/exe_e2e_test.py` 的 `--exe` 默认路径基于脚本目录(移到 tools/ 后指向
+  `tools/client/dist/…` 不存在) → 已修正为仓库根相对路径, 24-26 轮 10 项断言全 PASS。
+- 环境坑(已记踩坑备忘): 本沙箱子进程系统 TEMP 不可写 → PyInstaller --onefile 解包报
+  `Cannot create temporary directory!`; 测试工具把子进程 TEMP/TMP 指到仓库内 `client/_tmp_temp` 后正常。

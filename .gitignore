@@ -20,3 +20,14 @@ _tmp_*
 exe_out.log
 exe_err.log
 server/server_run.log
+
+# 构建/测试临时产物
+client/pip-*/
+client/build_local/
+client/dist_local/
+client/_tmp_temp/
+client/nattunnel-client-local.spec
+exe1.log
+exe2.log
+exe3.log
+_build.log

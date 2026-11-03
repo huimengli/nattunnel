@@ -118,7 +118,11 @@ curl -s https://www.keliit.top/nattunnel-admin/api/health   # => {"ok":true,...}
 2. 建隧道（本地目标主机填局域网内机器的 IP/域名，如 llama.cpp 所在主机的地址）
 3. "签发客户端令牌" 得到绑定令牌
 4. 局域网 PC 运行 `nattunnel-client.exe -a <令牌>` → 管理面板该隧道显示在线
-   > **exe 必须是 2026-09-12 之后的构建**: 旧构建缺 cryptography 依赖(启动即崩),
+   > **exe 必须是 2026-11-03 之后的构建**: 2026-09-12 之前的构建缺 cryptography 依赖(启动即崩) 且不带
+> API 前缀回退(混部下握手 404); 2026-11-03 13:03 之前的构建对**迁移后的 `http` 隧道不兼容** —
+> 其判定是 `proto == "tcp"`, `http` 会落到 UDP 分支, 字节流/WS 桥接数据面直接 504(实测
+> `tools/exe_e2e_test.py` X8-X10)。重编译: `client\build.bat -s www.keliit.top/tunnel/`
+> (自动同步唯一副本 `server/app/static/nattunnel-client.exe`), 上传该唯一副本即可。
    > 且不带 API 前缀回退(混部下握手 404)。若走"下载 exe"按钮分发,
     > (build.bat 构建后自动同步) — 两条下载通道读的是同一份文件, 只需上传这一份。
 5. 浏览器直开短链 `https://www.keliit.top/tunnel/<短链>` → 目标服务页面(http 隧道)
