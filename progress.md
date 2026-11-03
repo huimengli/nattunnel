@@ -79,5 +79,6 @@
 | hash | 类型 | 说明 | 状态 |
 |---|---|---|---|
 | `1d4e4b5` | docs(AI) | deploy 文档 5b(WS 握手桥接验证) + README 自测环境说明 | **已本地 commit, 未 push** |
+| `cd9650c` | docs(AI) | progress 归档精简(107→精简版; 全量在 ai_buckup) | **已本地 commit, 未 push** |
 | `5e3c7fd` | feat(AI) | 隧道协议改为 http/tcp/udp, 新 tcp 支持 WebSocket 握手桥接(20 轮全 PASS) | **已本地 commit, 未 push** |
 (历史提交见 `git log`; 本表自 2026-11-03 起记录本地 commit hash。)
