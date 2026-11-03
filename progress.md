@@ -1,16 +1,14 @@
 # nattunnel — 跨会话进度台账
 
+<!-- 已归档于 ai_buckup/progress.md_2026-11-03-19-18-00.md (107 行全量; 更早全量见 ai_buckup/progress.md_2026-11-03-18-58-00.md) -->
+<!-- 2026-11-03 19:18 归档动作: 移除 2026-09-12 两条会话摘要(全量在备份), 状态总览合并; 本次会话条目与踩坑/风险/Git 记录保留 -->
 <!-- 已归档于 ai_buckup/progress.md_2026-11-03-18-58-00.md (203 行全量; 历史会话条目/踩坑/部署排障细节均在备份) -->
-
 ## 项目目标
-
 无公网 IP 电脑 ⇄ 有公网 IP 服务器(nginx 反代 www.xxx.com):
 客户端 exe 将本机端口转发到 `www.xxx.com/tunnel/<8位短链>`。
 技术栈: Python / FastAPI / MySQL / Redis / JWT / RSA 握手 / WebSocket 中继;
 协议 **http | tcp | udp**(2026-11-03 改), 前端端口与带宽配置; 用户系统(管理员首启初始化, 代码无硬编码)。
-
 ## 关键约定
-
 - 8 位短链: 字母表去混淆字符, 例 `XgMacp2G`; 自动生成或手工指定。
 - 角色判定: `/tunnel/{id}` WS 携带有效 Bearer JWT 且属主/admin → LAN 侧; 否则公网侧(每连接一条流)。
 - 帧协议: `[type 1B][peer_id 4B BE][payload]`; 0x01 NEW / 0x02 DATA / 0x03 FIN / 0x04 CLOSE / 0x05 HELLO / 0x21 CONFIG(热更新) / 0x41 UDP-DATA。
@@ -20,9 +18,7 @@
   `tcp` = 原生字节流(WS 握手桥接 + 子协议裸流, 纯 HTTP → 400); `udp` = 仅子协议数据报(WS 握手 → 400)。
 - 公网侧 WS 归属: Bearer→LAN; 子协议 `nattunnel-relay`→帧协议裸流中继; 其余(浏览器式)→ http_bridge 桥接到内网 WS 服务。
 - 存量 `proto=tcp`(旧浏览器直开语义)首启一次性迁移为 `http`(AppSetting `proto_tcp_to_http_v1` 标记)。
-
 ## 凭据 / 环境
-
 | 项 | 值 |
 |---|---|
 | 管理员 | 首启创建: 交互终端 `python run.py` 控制台引导(隐藏+二次确认); 非交互回退 `.env INITIAL_ADMIN_PASSWORD` 或随机 16 位+日志一次性打印; 登录后 POST /api/password 改密; 无硬编码凭据 |
@@ -30,9 +26,7 @@
 | 后端默认地址 | http://127.0.0.1:8000 (server/ 目录 `python run.py`) |
 | MySQL/Redis | server/docker-compose.yml 一键起(无 Redis 时在线状态/限流降级内存) |
 | 本机自测 | `.venv` + `DATABASE_URL=sqlite:///./selftest.db` + `INITIAL_ADMIN_PASSWORD` 环境变量; `.env` 缺失会触发首启交互向导 |
-
 ## 状态总览
-
 - [x] 骨架 + 台账(progress.md / tree.md / records/ / todo.md / need_user.md / tests/)
 - [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据/绑定令牌
 - [x] 客户端: 无本地配置 — 服务器地址 build 时写死, 隧道 ID 由绑定令牌决定, 端口/协议/带宽/目标主机运行时读取; T_CONFIG 热更新; PyInstaller --onefile + favicon 图标
@@ -45,11 +39,8 @@
 - [x] exe 双下载通道(登录态 API + 静态直链, 单副本在 server/app/static/)
 - [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`; 部署后改管理员密码(步骤见 docs/deploy-keliit-top.md)
 - [ ] `tcp+udp` 同端口双栈混合(用户 2026-11-03 选方案A, 本项列为后续需求)
-
 ## 会话摘要(最近)
-
 ### 2026-11-03 13:21 — records/2026-11-03-13-21-03.md (协议改造 + WS 握手桥接)
-
 - 需求原文: "tcp 隧道实测只能转发 HTTP 但 WebSocket 握手到不了; 隧道选项 tcp,udp → http,tcp,udp; 原有 tcp 改为 http, tcp 需支持 WebSocket 握手"。
 - `relay.py`: `PROTOS=(http,tcp,udp)` + `RELAY_SUBPROTOCOL="nattunnel-relay"` + `data_type(proto)` + `alloc_peer(room)`(HTTP 桥接与 WS 桥接共用房间分配); 恢复被误删的 `get_redis()`。
 - `http_bridge.py`(重写): 新增 `WSCodec`(最小 RFC6455 客户端编解码: 掩码帧发/不掩码帧收, 分片/控制帧, RSV 非 0 与掩码服务端帧拒绝),
@@ -64,17 +55,7 @@
   selftest 新增阶段 E(E1-E10)与 D8; api_check 新增协议取值(422)/PATCH 改协议。
 - 方案A(用户拍板): 不新增 mixed 协议, `http` 即混合; `tcp+udp` 双栈混合列为后续需求(need_user.md Q1 已答, 已归档)。
 - 实测: 20 轮全 PASS(selftest 32 项 + api_check 18 项) → tests/2026-11-03-13-21-03_cc/(record_1..20 + opinion.md), 累积 tests/opinion.md。
-
-### 2026-09-12 11:17 — records/2026-09-12-11-17-20.md
-
-- 双下载通道: `/api/client/download`(登录态) + `server/app/static/nattunnel-client.exe` 静态直链(免登录, build.bat 自动同步); api_check/selftest(D7b)双通道校验。
-
-### 2026-09-12 11:24 — records/2026-09-12-11-24-24.md
-
-- 下载单副本化: API 通道改读 static 副本(两通道同源); 服务器只需 server/ 树。
-
 ## 踩坑备忘(后续会话必读)
-
 1. **PyInstaller --onefile 是双进程**: 杀 exe 用 `taskkill /F /IM nattunnel-client.exe`(父进程 kill 会留孤儿子进程)。
 2. **TCP 建连竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成 → 主循环先 `await open_tasks[pid]` 再入队(已在 run_tcp 实现)。
 3. `asyncio.DatagramTransport.sendto()` 是**同步方法**, 不能 await。
@@ -88,20 +69,15 @@
    `ASGI callable returned without completing handshake` — 属正常表征(客户端得到 HTTP 响应)。
 10. **spawn 子进程随 run_code 进程退出即被杀**: 服务器必须与测试在同一程序内启动/结束; spawn 时 stdin 用 pipe(非 tty)以走非交互首启路径,
     `server/.env` 缺失会触发首启交互向导(stdin 为 tty 时)。
-
 ## 风险 / 注意事项
-
 1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
 2. 多 worker 会破坏内存中继; 扩缩容需先做 Redis Pub/Sub 化(未来工作)。
 3. 字节流为"每公网连接一条", 不支持半关等细粒度语义(对 RDP/SSH/HTTP/WS 足够)。
 4. 客户端不持有本地配置(仅绑定令牌; 服务器地址构建时写死)。
 5. WS 桥接不做 permessage-deflate(桥接层无扩展); 浏览器↔内网服务的压缩由各自实现负责。
-
 ## Git 提交记录
-
 | hash | 类型 | 说明 | 状态 |
 |---|---|---|---|
 | `1d4e4b5` | docs(AI) | deploy 文档 5b(WS 握手桥接验证) + README 自测环境说明 | **已本地 commit, 未 push** |
 | `5e3c7fd` | feat(AI) | 隧道协议改为 http/tcp/udp, 新 tcp 支持 WebSocket 握手桥接(20 轮全 PASS) | **已本地 commit, 未 push** |
-
 (历史提交见 `git log`; 本表自 2026-11-03 起记录本地 commit hash。)
