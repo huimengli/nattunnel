@@ -110,6 +110,7 @@
 ## Git 提交记录
 | hash | 类型 | 说明 | 状态 |
 |---|---|---|---|
+| `7844f34` | fix(AI) | 管理页“编辑隧道”保存走 POST → 409(大小写短链); 台架 3 轮全 PASS | **已本地 commit, 未 push** |
 | `d3ec4ae` | docs(AI) | progress 追加本次会话条目(断线诊断 + header_timeout_s) | **已本地 commit, 未 push** |
 | `872ebe9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |
 | `1d4e4b5` | docs(AI) | deploy 文档 5b(WS 握手桥接验证) + README 自测环境说明 | **已本地 commit, 未 push** |
