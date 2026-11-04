@@ -37,6 +37,7 @@
 - [x] 混部子路径部署(nginx embed + 管理页相对路径 + API_BASES 回退) + docs/deploy-keliit-top.md
 - [x] 端到端自测: selftest 阶段 A(字节流+热更新)/B(UDP)/C(绑定令牌)/D(纯 HTTP 直转+tcp 拒绝)/E(WS 握手桥接) 32 项 + api_check 18 项, 20 轮全 PASS
 - [x] exe 双下载通道(登录态 API + 静态直链, 单副本在 server/app/static/)
+- [x] **隧道配置项 `header_timeout_s`**(2026-11-04): 响应头等待窗口, 默认 30 秒 / 上限 600 秒; 服务端逐请求读库(管理页改后下一个请求生效, 不走 T_CONFIG); WS 握手窗口固定 20 秒; 3 轮验证全 PASS
 - [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`; 部署后改管理员密码(步骤见 docs/deploy-keliit-top.md)
 - [ ] `tcp+udp` 同端口双栈混合(用户 2026-11-03 选方案A, 本项列为后续需求)
 ## 会话摘要(最近)
@@ -55,6 +56,15 @@
   selftest 新增阶段 E(E1-E10)与 D8; api_check 新增协议取值(422)/PATCH 改协议。
 - 方案A(用户拍板): 不新增 mixed 协议, `http` 即混合; `tcp+udp` 双栈混合列为后续需求(need_user.md Q1 已答, 已归档)。
 - 实测: 20 轮全 PASS(selftest 32 项 + api_check 18 项) → tests/2026-11-03-13-21-03_cc/(record_1..20 + opinion.md), 累积 tests/opinion.md。
+
+### 2026-11-04 19:06 — records/2026-11-04-19-06-38.md (断线诊断 + 隧道配置项 header_timeout_s)
+- 现象: 带 46 张截图的 `POST /v1/chat/completions` 连续 5 次 504 `"本地服务响应超时"`(14:34 / 18:46 同型); 14:34:38 客户端 `sent 1011 keepalive ping timeout`。
+- 只读诊断(server.log + nginx 访问日志, 经 ssh 公钥只读取证): 504 起算点在**请求体入隧后 20 秒**(`_HEADER_TIMEOUT`), 46 图 prefill 远超 20 秒 → 必然 504; 超时后 finally 发 T_CLOSE 掐本地生成 → 重试 = 重传 46 图 + 再被掐;
+  1011 是这条链下游(20 秒无响应 → 无 pong), **不是真断线**(nginx WS 会话 17.6MB/67s ≈ 2Mbps, 关闭时间戳逐一对应); 拥塞排除(websockets 17 的 32KB 反压 → 在途 ≈96KB, 2Mbps 下 ping 排队 ~0.12 秒)。
+- 实现: `header_timeout_s`(默认 30, 1..600) 走与 `bandwidth_kbps` 同一管线: models 列 + seed 幂等 ALTER + schemas + routers create/_to_out + http_bridge 逐请求取值 + 管理页"响应超时(s)"列与输入; 服务端参数**不推 T_CONFIG**。
+- `http_bridge` 常量拆分: `_WS_HANDSHAKE_TIMEOUT = 20.0`(WS 握手等 101, 不随配置放大) / `_DEFAULT_HEADER_TIMEOUT = 30.0`(兜底)。
+- 新增 `tools/header_timeout_test.py`(阶段 F 9 项: 默认 30/显式 45/600 接受/601→422/45s 窗口+40s 慢服务→200/10s→504 文案/改回 45 立即生效/回显); 验证 3 轮全 PASS(header 9 + selftest 32) → tests/2026-11-04-19-06-38_cc/。
+- 待办: 生产重启自动补列(现隧道默认 30, 行为不变); 建议 llm 隧道设 300; 需核实 nginx `proxy_read_timeout` ≥ 配置值。
 ## 踩坑备忘(后续会话必读)
 1. **PyInstaller --onefile 是双进程**: 杀 exe 用 `taskkill /F /IM nattunnel-client.exe`(父进程 kill 会留孤儿子进程)。
 2. **TCP 建连竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成 → 主循环先 `await open_tasks[pid]` 再入队(已在 run_tcp 实现)。
@@ -73,7 +83,9 @@
     (`pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller==6.1.0 ...`, 91s 完成);
     `run_code` 的 `process.env` 是空的(无 TEMP/USERPROFILE/SystemRoot), spawn 子进程时需自行补齐。
 12. **spawn 子进程随 run_code 进程退出即被杀**: 服务器必须与测试在同一程序内启动/结束; spawn 时 stdin 用 pipe(非 tty)以走非交互首启路径,
-    `server/.env` 缺失会触发首启交互向导(stdin 为 tty 时)。
+    `server/.env` 缺失会触发首启交互向导(stdin 为 tty 时); Windows `stdio:"ignore"` 的 stdin 仍是 tty, 必须显式用 pipe。
+13. **504 的语义边界**: `504 = 响应头窗口超时`(起算点在请求体全部入隧之后), 不代表隧道断开; `502 = 转发失败/链路中断`; `503 = room.lan is None`。
+    窗口超时后 bridge 的 finally 发 T_CLOSE 掐本地请求, 内网服务随后写响应会 ConnectionAborted(WinError 10053) — 属预期。
 ## 风险 / 注意事项
 1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
 2. 多 worker 会破坏内存中继; 扩缩容需先做 Redis Pub/Sub 化(未来工作)。

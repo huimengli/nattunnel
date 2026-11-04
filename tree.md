@@ -11,13 +11,15 @@ nattunnel/
 ├── .gitignore                   # venv/db/.env/exe 产物/临时文件
 ├── records/                     # 需求与会话记录 yyyy-MM-dd-HH-mm-ss.md
 │   ├── 2026-09-11-00-33-34.md … 2026-09-12-11-24-24.md   # 历史会话(骨架/凭据/部署/下载)
-│   └── 2026-11-03-13-21-03.md   # 会话: 协议改造 http/tcp/udp + WebSocket 握手桥接
+│   ├── 2026-11-03-13-21-03.md   # 会话: 协议改造 http/tcp/udp + WebSocket 握手桥接
+│   └── 2026-11-04-19-06-38.md   # 会话: 14:34 断线诊断 + 隧道配置项 header_timeout_s(默认30/上限600)
 ├── ai_buckup/                   # 归档(仅本次已归档的台账/问答)
 │   ├── progress.md_2026-11-03-18-58-00.md
 │   └── need_user.md_2026-11-03-18-58-00.md
 ├── tests/                       # 测试记录
 │   ├── opinion.md               # 累积结论
-│   └── 2026-11-03-13-21-03_cc/  # 本批次 20 轮: record_1..20.md + opinion.md
+│   ├── 2026-11-03-13-21-03_cc/  # 本批次 20 轮: record_1..20.md + opinion.md
+│   └── 2026-11-04-19-06-38_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md
 │
 ├── server/                      # FastAPI 后端(单 worker)
 │   ├── requirements.txt         # fastapi/uvicorn[standard]/sqlalchemy/pymysql/cryptography/PyJWT/redis/python-dotenv
@@ -32,11 +34,11 @@ nattunnel/
 │       ├── main.py              # FastAPI 应用 + /tunnel/{tid} WS 中继(角色判定/data_types/子协议回填)
 │       ├── config.py            # .env 配置读取
 │       ├── database.py          # SQLAlchemy engine/session/Base + reconfigure()
-│       ├── models.py            # User / Tunnel(proto http|tcp|udp) / AppSetting
+│       ├── models.py            # User / Tunnel(proto http|tcp|udp, 带宽, 响应超时秒) / AppSetting
 │       ├── schemas.py           # Pydantic 请求/响应(proto 取值校验)
 │       ├── security.py          # pbkdf2 密码哈希 / JWT / RSA 密钥对管理
 │       ├── deps.py              # Bearer 鉴权依赖
-│       ├── http_bridge.py       # 隧道桥: 纯 HTTP 直转(仅 http 隧道) + WS 握手桥接(WSCodec) + 预拒绝
+│       ├── http_bridge.py       # 隧道桥: 纯 HTTP 直转(仅 http 隧道, 响应头窗口逐请求取隧道配置) + WS 握手桥接(WSCodec) + 预拒绝
 │       ├── relay.py             # Hub/Room 房间表, 帧编解码, RELAY_SUBPROTOCOL, data_type, Redis 在线/限流
 │       ├── seed.py              # 建表 + 首启管理员 + 一次性 tcp→http 迁移 + 演示隧道 + RSA 键
 │       ├── routers/             # auth(login/RSA) / users / tunnels(CRUD+token) / download
@@ -56,6 +58,7 @@ nattunnel/
     ├── ws_tcp_test.py           # 子协议 nattunnel-relay 字节流裸流(HELLO/echo)
     ├── ws_udp_test.py           # 子协议 nattunnel-relay 数据报(HELLO/echo)
     ├── ws_handshake_test.py     # 浏览器式 WS 握手桥接(握手结果/子协议/echo)
+    ├── header_timeout_test.py   # 阶段 F: header_timeout_s(默认30/上限600) 端到端 + 504 文案 + 逐请求热生效
     ├── selftest.py              # 端到端: A 字节流+热更新 / B UDP / C 绑定令牌 / D 纯 HTTP 直转 / E WS 握手桥接
     └── api_check.py             # API 全链路(含 proto 取值与改协议)
 ```

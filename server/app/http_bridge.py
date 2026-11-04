@@ -49,7 +49,10 @@ log = logging.getLogger("nattunnel.bridge")
 
 _TID_RE = re.compile(r"^/tunnel/([A-Za-z0-9]{8})(/.*)?$")
 _CHUNK = 64 * 1024
-_HEADER_TIMEOUT = 20.0
+# WS 握手等 101 响应头窗口(秒): 固定值, 不随隧道配置放大
+_WS_HANDSHAKE_TIMEOUT = 20.0
+# 默认响应头窗口(秒); 隧道列 header_timeout_s 缺失时的兜底
+_DEFAULT_HEADER_TIMEOUT = 30.0
 
 # hop-by-hop / WS 握手相关头: 纯 HTTP 直转时不转发给内网服务
 _STRIP_REQ_HEADERS = {
@@ -515,7 +518,7 @@ async def _ws_bridge(scope, receive, send, tid: str, target_path: str, info: dic
         # 2) 等内网服务的握手响应(限时); 浏览器此时不会发数据
         buf = b""
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _HEADER_TIMEOUT
+        deadline = loop.time() + _WS_HANDSHAKE_TIMEOUT
         parsed = None
         while parsed is None:
             timeout = max(0.0, deadline - loop.time())
@@ -599,6 +602,8 @@ async def _bridge(scope, receive, send, tid: str, target_path: str) -> None:
                 await _send_json(send, 400, "HTTP 直转仅支持 http 隧道(该隧道是 %s)" % tunnel.proto)
                 return
             local_port = tunnel.local_port
+            # 逐请求读隧道的响应头窗口(管理页可改, 改后下一个请求生效)
+            header_timeout = float(tunnel.header_timeout_s or _DEFAULT_HEADER_TIMEOUT)
 
         room = hub.get(tid)
         if room is None or room.lan is None:
@@ -634,7 +639,7 @@ async def _bridge(scope, receive, send, tid: str, target_path: str) -> None:
         # 4) 等响应头(限时); LAN 离线/客户端断开即中止
         parser = _RespParser()
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + _HEADER_TIMEOUT
+        deadline = loop.time() + header_timeout
         while not parser.headers_done and not aborted:
             timeout = max(0.0, deadline - loop.time())
             kind, item = await _next_frame(qpub, receive, timeout=timeout)

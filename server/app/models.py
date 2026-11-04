@@ -33,6 +33,8 @@ class Tunnel(Base):
     local_target_host: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
     # 带宽上限(kbps), 0 = 不限制; 由客户端执行令牌桶限流
     bandwidth_kbps: Mapped[int] = mapped_column(Integer, default=0)
+    # 响应头等待窗口(秒), 1..600; 服务端 http 隧道专用(请求体入隧后起算)
+    header_timeout_s: Mapped[int] = mapped_column(Integer, default=30)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

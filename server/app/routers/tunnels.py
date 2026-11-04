@@ -65,6 +65,7 @@ def _to_out(tunnel: Tunnel, owner_name: str) -> TunnelOut:
         local_port=tunnel.local_port,
         local_target_host=tunnel.local_target_host or "127.0.0.1",
         bandwidth_kbps=tunnel.bandwidth_kbps,
+        header_timeout_s=int(tunnel.header_timeout_s or 30),
         enabled=bool(tunnel.enabled),
         lan_online=online,
         pub_count=pub_count,
@@ -103,12 +104,16 @@ def create_tunnel(
         local_port=body.local_port,
         local_target_host=(body.local_target_host or "127.0.0.1").strip(),
         bandwidth_kbps=body.bandwidth_kbps,
+        header_timeout_s=body.header_timeout_s,
         enabled=True,
     )
     db.add(tunnel)
     db.commit()
     db.refresh(tunnel)
-    log.info("user '%s' created tunnel %s (%s:%s, %skbps)", user.username, tid, body.proto, body.local_port, body.bandwidth_kbps)
+    log.info(
+        "user '%s' created tunnel %s (%s:%s, %skbps, 响应头窗口 %ss)",
+        user.username, tid, body.proto, body.local_port, body.bandwidth_kbps, body.header_timeout_s,
+    )
     return _to_out(tunnel, user.username)
 
 
@@ -134,7 +139,8 @@ async def update_tunnel(
     db.refresh(tunnel)
     # 配置热更新:
     #   协议变更 -> 所有现有流失效, 拆除房间(客户端会自动重连并拉新配置);
-    #   端口/带宽/目标主机变更 -> T_CONFIG 推给在线 LAN 侧, 现有连接保持。
+    #   端口/带宽/目标主机变更 -> T_CONFIG 推给在线 LAN 侧, 现有连接保持;
+    #   header_timeout_s 是服务端参数(http_bridge 逐请求读库), 不需要推给客户端。
     if "proto" in data and data["proto"] != proto_before:
         hub.drop(tid)
     elif {"local_port", "bandwidth_kbps", "local_target_host"} & data.keys():

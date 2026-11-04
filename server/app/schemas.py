@@ -50,6 +50,8 @@ class TunnelCreate(BaseModel):
     # 本机目标主机(客户端转发流量的对端), 默认回环
     local_target_host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
     bandwidth_kbps: int = Field(default=0, ge=0)
+    # 响应头等待窗口(秒): 请求体入隧后, 本地服务必须在此窗口内吐响应头; 超时 504
+    header_timeout_s: int = Field(default=30, ge=1, le=600)
 
 
 class TunnelUpdate(BaseModel):
@@ -58,6 +60,7 @@ class TunnelUpdate(BaseModel):
     local_port: Optional[int] = Field(default=None, ge=1, le=65535)
     local_target_host: Optional[str] = Field(default=None, min_length=1, max_length=255)
     bandwidth_kbps: Optional[int] = Field(default=None, ge=0)
+    header_timeout_s: Optional[int] = Field(default=None, ge=1, le=600)
     enabled: Optional[bool] = None
 
 
@@ -69,6 +72,7 @@ class TunnelOut(BaseModel):
     local_port: int
     local_target_host: str
     bandwidth_kbps: int
+    header_timeout_s: int
     enabled: bool
     lan_online: bool = False
     pub_count: int = 0

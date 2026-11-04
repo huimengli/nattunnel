@@ -283,6 +283,26 @@ def _migrate_local_target_host() -> None:
             log.warning("migration check tunnels.local_target_host failed: %s", exc)
 
 
+def _migrate_header_timeout() -> None:
+    """存量库幂等迁移: tunnels 表补 header_timeout_s 列(新建库由 create_all 处理)。"""
+    from sqlalchemy import text
+
+    with get_engine().begin() as conn:
+        try:
+            conn.execute(
+                text(
+                    "ALTER TABLE tunnels ADD COLUMN header_timeout_s "
+                    "INT NOT NULL DEFAULT 30"
+                )
+            )
+            log.info("migration: tunnels.header_timeout_s column added")
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "duplicate" in msg or "1060" in msg:
+                return  # 列已存在, 正常
+            log.warning("migration check tunnels.header_timeout_s failed: %s", exc)
+
+
 def _is_db_config_error(exc) -> bool:
     msg = str(exc).lower()
     return any(k in msg for k in (
@@ -302,6 +322,7 @@ def init_db(retries: int = 6, delay: float = 2.0) -> None:
         try:
             Base.metadata.create_all(get_engine())
             _migrate_local_target_host()
+            _migrate_header_timeout()
             _seed()
             log.info("database initialized (attempt %d)", attempt)
             return

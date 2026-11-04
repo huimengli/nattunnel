@@ -120,14 +120,14 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
   <div class="card">
     <div class="row" style="margin-bottom:10px">
       <h2>隧道(客户端配置)</h2>
-      <span class="muted">exe 按此表中的 协议/本地端口/带宽 工作; “在线”= exe 已连到服务器。</span>
+      <span class="muted">exe 按此表中的 协议/本地端口/带宽 工作; “响应超时”是<b>服务端</b>参数(请求体入隧后等响应头的窗口), 改后下一个请求生效; “在线”= exe 已连到服务器。</span>
       <span class="spacer"></span>
       <button class="primary" onclick="openTunnelModal(null)">+ 新建隧道</button>
     </div>
     <table id="tunnels-table">
       <thead><tr>
         <th>短链 ID</th><th>名称</th><th>属主</th><th>协议</th><th>本地端口</th><th>本地目标</th>
-        <th>带宽(kbps)</th><th>启用</th><th>exe 在线</th><th>公网连接</th><th>创建时间</th><th>操作</th>
+        <th>带宽(kbps)</th><th>响应超时(s)</th><th>启用</th><th>exe 在线</th><th>公网连接</th><th>创建时间</th><th>操作</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -146,7 +146,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       <a class="muted" href="nattunnel-client.exe" title="静态资产直链(打包时自动同步到 server/app/static; 两条通道内容一致)">&nbsp;|&nbsp; 静态直链下载</a>
     </div>
     <p class="muted">服务器地址在<b>构建 exe 时写死</b>(client/build.bat -s), 运行时<b>无需 config.json</b>, 只需上方“认证令牌”签发的绑定令牌:<br>
-      <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>; 端口/协议/带宽/目标主机全部从该隧道的服务器设置读取(改设置经 T_CONFIG 热更新)</p>
+      <span class="mono">nattunnel-client.exe -a &lt;token&gt;</span>; 端口/协议/带宽/目标主机全部从该隧道的服务器设置读取(改设置经 T_CONFIG 热更新); “响应超时”由服务端逐请求读取, 不推给 exe</p>
     <pre class="snippet" id="base-snippet"></pre>
   </div>
 
@@ -180,6 +180,7 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       <div><label>本地端口(前端端口)</label><input id="tm-port" type="number" min="1" max="65535"></div>
       <div><label>本地目标主机</label><input id="tm-host" value="127.0.0.1" placeholder="127.0.0.1"></div>
       <div><label>带宽上限 kbps(0=不限)</label><input id="tm-bw" type="number" min="0" value="0"></div>
+      <div><label>响应超时(s) 1-600</label><input id="tm-htimeout" type="number" min="1" max="600" value="30"></div>
     </div>
     <p class="muted" id="proto-hint" style="margin:6px 0 0"></p>
     <div class="row">
@@ -349,6 +350,7 @@ function renderTunnels() {
   for (const t of state.tunnels) {
     const tr = document.createElement("tr");
     const bwTxt = !t.bandwidth_kbps ? "不限" : t.bandwidth_kbps;
+    const htTxt = t.header_timeout_s || 30;
     tr.innerHTML =
       `<td class="mono">${esc(t.tunnel_id)}</td>` +
       `<td>${esc(t.name || "-")}</td>` +
@@ -357,6 +359,7 @@ function renderTunnels() {
       `<td>${esc(t.local_port)}</td>` +
       `<td class="mono">${esc(t.local_target_host || "127.0.0.1")}</td>` +
       `<td>${bwTxt}</td>` +
+      `<td>${htTxt}</td>` +
       `<td><span class="badge ${t.enabled ? "on" : "off"}">${t.enabled ? "启用" : "停用"}</span></td>` +
       `<td><span class="badge ${t.lan_online ? "on" : "off"}">${t.lan_online ? "在线" : "离线"}</span></td>` +
       `<td>${t.pub_count}</td>` +
@@ -368,7 +371,7 @@ function renderTunnels() {
     tbody.appendChild(tr);
   }
   if (!state.tunnels.length) {
-    tbody.innerHTML = `<tr><td colspan="12" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
   }
 }
 
@@ -382,6 +385,7 @@ function openTunnelModal(tid) {
   document.getElementById("tm-port").value = t ? t.local_port : "";
   document.getElementById("tm-host").value = t ? (t.local_target_host || "127.0.0.1") : "127.0.0.1";
   document.getElementById("tm-bw").value = t ? t.bandwidth_kbps : 0;
+  document.getElementById("tm-htimeout").value = t ? (t.header_timeout_s || 30) : 30;
   document.getElementById("tm-enabled").checked = t ? !!t.enabled : true;
   document.getElementById("tm-hint").textContent = t && (t.lan_online || t.pub_count) ? "注意: 修改将断开该隧道现有连接" : "";
   showModal("tunnel-modal");
@@ -404,16 +408,17 @@ async function saveTunnel() {
   const port = parseInt(document.getElementById("tm-port").value, 10);
   const host = document.getElementById("tm-host").value.trim() || "127.0.0.1";
   const bw = Math.max(0, parseInt(document.getElementById("tm-bw").value || "0", 10));
+  const htimeout = Math.min(600, Math.max(1, parseInt(document.getElementById("tm-htimeout").value || "30", 10)));
   const enabled = document.getElementById("tm-enabled").checked;
   if (!port || port < 1 || port > 65535) return toast("本地端口必须是 1-65535", "err");
   if (tid && !/^[A-Z0-9]{8}$/.test(tid)) return toast("短链 ID 需为 8 位字母数字(不含 0O1lI)", "err");
   try {
     const idx = state.tunnels.findIndex(x => x.tunnel_id === tid);
     if (idx >= 0) {
-      await api("api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, enabled } });
+      await api("api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout, enabled } });
       toast("隧道已更新", "ok");
     } else {
-      const body = { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw };
+      const body = { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout };
       if (tid) body.tunnel_id = tid;
       await api("api/tunnels", { method: "POST", body });
       toast("隧道已创建", "ok");

@@ -11,3 +11,7 @@
 - [x] 2026-11-03-19:33 重编译客户端 exe(客户端 http/tcp 字节流判定 + 文档表述变更; 同步 server/app/static 副本) — 旧 exe 对迁移后的 `http` 隧道会走 UDP 分支, 必须换新构建
 - [ ] 后续需求(方案A 未含): `tcp+udp` 同端口双栈混合(客户端双 socket + 中继 T_DATA/U_DATA 分流) → 需新 record 再开工
 - [ ] 部署到 www.keliit.top(子路径), 部署后改管理员密码(步骤 docs/deploy-keliit-top.md; 需服务器侧执行)
+- [x] 2026-11-04-19-06-38 隧道配置项 `header_timeout_s`(响应超时, 默认 30 秒/最大 600 秒) → records/2026-11-04-19-06-38.md
+  - [x] 服务端: models 列 + schemas + seed 幂等迁移 + routers create/_to_out + http_bridge 使用 + 管理页表单
+  - [x] 验证 3 轮(header_timeout_test 9 项 + selftest 32 项全 PASS) → tests/2026-11-04-19-06-38_cc/
+  - [ ] 生产: 重启补列后把 llm 隧道设为 300; 核实 nginx proxy_read_timeout ≥ 配置值
