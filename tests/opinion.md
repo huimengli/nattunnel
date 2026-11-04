@@ -22,3 +22,9 @@
 - 场景: sqlite + 内网慢服务(响应头延迟 40 秒) + 进程内真实客户端; 每轮 header_timeout_test(9 项) + selftest(32 项)。
 - 结果: 3/3 轮 PASS → tests/2026-11-04-19-06-38_cc/(record_1..3 + opinion.md)
 - 关键结论: 窗口逐请求读库(改后下一个请求生效, 无需重启); 窗口起算点在请求体入隧之后(大 body 上传耗时不占窗口); 超时后 T_CLOSE 掐本地请求(慢服务随后写响应 ConnectionAborted 属预期); WS 握手窗口固定 20 秒不随配置放大; 存量库幂等 ALTER(init_db x2 无异常)。
+## 2026-11-04-20-17-27 批次(验证 3 轮): 管理页“编辑隧道”保存走 PATCH(大小写短链) — 3 轮全 PASS
+
+- 场景: Node 台架抽取 index.html 的 openTunnelModal/saveTunnel 真实函数体 + 桩 DOM/api(api 桩按 MySQL CI 语义对已存在短链回 409); 基线钉在修复前 commit d3ec4ae。
+- 结果: 3/3 轮 PASS(每轮 6 项) → tests/2026-11-04-20-17-27_cc/(record_1..3 + opinion.md)
+- 关键结论: 编辑/新建判定须用弹窗打开时记录的 editingTid(生成短链大小写混合, 大写化后查不到 → 走 POST → 409 tunnel id already exists);
+  改动前还会静默大写手填 ID(abHjkmn2 → ABHJKMN2), 编辑态改 ID 会新建隧道; 修复后: PATCH 原 ID, 改 ID 被拒(零请求), 700 夹到 600, 9 位 ID 拒。

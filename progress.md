@@ -36,6 +36,7 @@
   子协议协商结果回带, 剥 `Sec-WebSocket-Extensions`; 拒绝码 404(隧道缺失)/502(LAN 离线)/504(无握手响应)/内网非 101 原码透传
 - [x] 混部子路径部署(nginx embed + 管理页相对路径 + API_BASES 回退) + docs/deploy-keliit-top.md
 - [x] 端到端自测: selftest 阶段 A(字节流+热更新)/B(UDP)/C(绑定令牌)/D(纯 HTTP 直转+tcp 拒绝)/E(WS 握手桥接) 32 项 + api_check 18 项, 20 轮全 PASS
+- [x] **修复管理页“编辑隧道”保存(2026-11-04)**: 短链大小写混合导致保存走 POST → 409 "tunnel id already exists"; 改用 `editingTid` 判定 + 编辑态 ID 只读; 台架 3 轮全 PASS
 - [x] exe 双下载通道(登录态 API + 静态直链, 单副本在 server/app/static/)
 - [x] **隧道配置项 `header_timeout_s`**(2026-11-04): 响应头等待窗口, 默认 30 秒 / 上限 600 秒; 服务端逐请求读库(管理页改后下一个请求生效, 不走 T_CONFIG); WS 握手窗口固定 20 秒; 3 轮验证全 PASS
 - [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`; 部署后改管理员密码(步骤见 docs/deploy-keliit-top.md)
@@ -65,6 +66,16 @@
 - `http_bridge` 常量拆分: `_WS_HANDSHAKE_TIMEOUT = 20.0`(WS 握手等 101, 不随配置放大) / `_DEFAULT_HEADER_TIMEOUT = 30.0`(兜底)。
 - 新增 `tools/header_timeout_test.py`(阶段 F 9 项: 默认 30/显式 45/600 接受/601→422/45s 窗口+40s 慢服务→200/10s→504 文案/改回 45 立即生效/回显); 验证 3 轮全 PASS(header 9 + selftest 32) → tests/2026-11-04-19-06-38_cc/。
 - 待办: 生产重启自动补列(现隧道默认 30, 行为不变); 建议 llm 隧道设 300; 需核实 nginx `proxy_read_timeout` ≥ 配置值。
+### 2026-11-04 20:17 — records/2026-11-04-20-17-27.md (管理页“编辑隧道”保存失败: 大小写短链)
+- 现象: 编辑 `smGvs9xQ` (响应超时 300) 点保存 → toast `tunnel id already exists`; 与隧道是否在线无关(服务端没收到 PATCH)。
+- 根因: `saveTunnel()` 用大写化后的输入查 `state.tunnels` 判定编辑/新建; 生成短链大小写混合
+  (`routers/tunnels.py:20 ALPHABET` 含小写) → `smGvs9xQ` ≠ `SMGVS9XQ` → idx=-1 → POST + `tunnel_id:"SMGVS9XQ"` →
+  MySQL CI Collation 命中已有行 → `HTTPException(409, "tunnel id already exists")` (`routers/tunnels.py:98`)。
+- 副产(改动前): 新建手填 `abHjkmn2` 被静默大写为 `ABHJKMN2`; 编辑态把 ID 改成别的值会**新建一条隧道**。
+- 修复(仅前端 index.html): `openTunnelModal` 记录 `editingTid` 并设 `#tm-tid` readOnly; 判定用 `editingTid`;
+  新建态正则与服务端一致 `^[A-Za-z0-9]{8}$`(手填 ID 原样保留); 编辑态改 ID → toast 拒绝且零请求。
+- 新增 `tools/admin_ui_logic_test.js`(台架: 抽真实函数体 + 桩 DOM/api, api 桩按 MySQL CI 回 409; 基线钉 `d3ec4ae`); 3 轮全 PASS(6 项)。
+- 部署: 覆盖 `server/app/static/index.html` 即可(静态逐请求读盘, **无需重启 uvicorn**) + 浏览器 Ctrl+F5。
 ## 踩坑备忘(后续会话必读)
 1. **PyInstaller --onefile 是双进程**: 杀 exe 用 `taskkill /F /IM nattunnel-client.exe`(父进程 kill 会留孤儿子进程)。
 2. **TCP 建连竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成 → 主循环先 `await open_tasks[pid]` 再入队(已在 run_tcp 实现)。
@@ -85,6 +96,10 @@
 12. **spawn 子进程随 run_code 进程退出即被杀**: 服务器必须与测试在同一程序内启动/结束; spawn 时 stdin 用 pipe(非 tty)以走非交互首启路径,
     `server/.env` 缺失会触发首启交互向导(stdin 为 tty 时); Windows `stdio:"ignore"` 的 stdin 仍是 tty, 必须显式用 pipe。
 13. **504 的语义边界**: `504 = 响应头窗口超时`(起算点在请求体全部入隧之后), 不代表隧道断开; `502 = 转发失败/链路中断`; `503 = room.lan is None`。
+    窗口超时后 bridge 的 finally 发 T_CLOSE 掐本地请求, 内网服务随后写响应会 ConnectionAborted(WinError 10053) — 属预期。
+14. **短链是大小写混合的**: `ALPHABET` 含小写字母; UI 侧 `toUpperCase()` 会破坏 `state.tunnels` 查表与
+    PATCH 路径(编辑保存变 POST → MySQL CI → 409), 并静默改写用户手填 ID(abHjkmn2 → ABHJKMN2)。判定须用弹窗打开时记录的
+    `editingTid`(台架 `tools/admin_ui_logic_test.js` 钉基线 `d3ec4ae` 可复现)。
     窗口超时后 bridge 的 finally 发 T_CLOSE 掐本地请求, 内网服务随后写响应会 ConnectionAborted(WinError 10053) — 属预期。
 ## 风险 / 注意事项
 1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。

@@ -15,3 +15,7 @@
   - [x] 服务端: models 列 + schemas + seed 幂等迁移 + routers create/_to_out + http_bridge 使用 + 管理页表单
   - [x] 验证 3 轮(header_timeout_test 9 项 + selftest 32 项全 PASS) → tests/2026-11-04-19-06-38_cc/
   - [ ] 生产: 重启补列后把 llm 隧道设为 300; 核实 nginx proxy_read_timeout ≥ 配置值
+- [x] 2026-11-04-20-17-27 管理页"编辑隧道"保存失败(tunnel id already exists, 大小写) → records/2026-11-04-20-17-27.md
+  - [x] 前端: editingTid 判定 + ID 只读 + 8 位大小写正则 + PATCH 用原 ID
+  - [x] 验证 3 轮(台架对照 HEAD/工作区) → tests/2026-11-04-20-17-27_cc/
+  - [ ] 生产: 覆盖 index.html(无需重启) + Ctrl+F5 复验

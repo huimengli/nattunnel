@@ -12,14 +12,16 @@ nattunnel/
 ├── records/                     # 需求与会话记录 yyyy-MM-dd-HH-mm-ss.md
 │   ├── 2026-09-11-00-33-34.md … 2026-09-12-11-24-24.md   # 历史会话(骨架/凭据/部署/下载)
 │   ├── 2026-11-03-13-21-03.md   # 会话: 协议改造 http/tcp/udp + WebSocket 握手桥接
-│   └── 2026-11-04-19-06-38.md   # 会话: 14:34 断线诊断 + 隧道配置项 header_timeout_s(默认30/上限600)
+│   ├── 2026-11-04-19-06-38.md   # 会话: 14:34 断线诊断 + 隧道配置项 header_timeout_s(默认30/上限600)
+│   └── 2026-11-04-20-17-27.md   # 会话: 管理页“编辑隧道”保存失败(大小写短链 → POST → 409)
 ├── ai_buckup/                   # 归档(仅本次已归档的台账/问答)
 │   ├── progress.md_2026-11-03-18-58-00.md
 │   └── need_user.md_2026-11-03-18-58-00.md
 ├── tests/                       # 测试记录
 │   ├── opinion.md               # 累积结论
 │   ├── 2026-11-03-13-21-03_cc/  # 本批次 20 轮: record_1..20.md + opinion.md
-│   └── 2026-11-04-19-06-38_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md
+│   ├── 2026-11-04-19-06-38_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md
+│   └── 2026-11-04-20-17-27_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md(台架对照)
 │
 ├── server/                      # FastAPI 后端(单 worker)
 │   ├── requirements.txt         # fastapi/uvicorn[standard]/sqlalchemy/pymysql/cryptography/PyJWT/redis/python-dotenv
@@ -60,5 +62,6 @@ nattunnel/
     ├── ws_handshake_test.py     # 浏览器式 WS 握手桥接(握手结果/子协议/echo)
     ├── header_timeout_test.py   # 阶段 F: header_timeout_s(默认30/上限600) 端到端 + 504 文案 + 逐请求热生效
     ├── selftest.py              # 端到端: A 字节流+热更新 / B UDP / C 绑定令牌 / D 纯 HTTP 直转 / E WS 握手桥接
-    └── api_check.py             # API 全链路(含 proto 取值与改协议)
+    ├── api_check.py             # API 全链路(含 proto 取值与改协议)
+    └── admin_ui_logic_test.js   # 台架: 抽管理页函数体验证编辑/新建判定(大小写短链/PATCH vs POST)
 ```

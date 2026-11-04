@@ -375,11 +375,15 @@ function renderTunnels() {
   }
 }
 
+let editingTid = null;  /* 弹窗打开时的隧道 ID; null = 新建(隧道 ID 不可改, 只能新建) */
+
 function openTunnelModal(tid) {
+  editingTid = tid || null;
   document.getElementById("tm-title").textContent = tid ? "编辑隧道 " + tid : "新建隧道";
   const t = state.tunnels.find(x => x.tunnel_id === tid);
   document.getElementById("tm-name").value = t ? (t.name || "") : "";
   document.getElementById("tm-tid").value = t ? t.tunnel_id : "";
+  document.getElementById("tm-tid").readOnly = !!t;  /* 编辑态锁定 ID(改 ID 需新建) */
   document.getElementById("tm-proto").value = t ? t.proto : "http";
   protoHint();
   document.getElementById("tm-port").value = t ? t.local_port : "";
@@ -403,7 +407,7 @@ function protoHint() {
 
 async function saveTunnel() {
   const name = document.getElementById("tm-name").value.trim();
-  const tid = document.getElementById("tm-tid").value.trim().toUpperCase();
+  const tidInput = document.getElementById("tm-tid").value.trim();
   const proto = document.getElementById("tm-proto").value;
   const port = parseInt(document.getElementById("tm-port").value, 10);
   const host = document.getElementById("tm-host").value.trim() || "127.0.0.1";
@@ -411,10 +415,18 @@ async function saveTunnel() {
   const htimeout = Math.min(600, Math.max(1, parseInt(document.getElementById("tm-htimeout").value || "30", 10)));
   const enabled = document.getElementById("tm-enabled").checked;
   if (!port || port < 1 || port > 65535) return toast("本地端口必须是 1-65535", "err");
-  if (tid && !/^[A-Z0-9]{8}$/.test(tid)) return toast("短链 ID 需为 8 位字母数字(不含 0O1lI)", "err");
+  /* 编辑/新建判定用弹窗打开时的 ID(editingTid): 生成的短链是大小写混合的
+     (ALPHABET 含小写字母), 大写化后查不到 -> 走 POST -> 409 "tunnel id already exists" */
+  let tid;
+  if (editingTid) {
+    if (tidInput !== editingTid) return toast("隧道 ID 不可修改(改 ID 请新建隧道)", "err");
+    tid = editingTid;
+  } else {
+    tid = tidInput;
+    if (tid && !/^[A-Za-z0-9]{8}$/.test(tid)) return toast("短链 ID 需为 8 位字母数字(不含 0O1lI)", "err");
+  }
   try {
-    const idx = state.tunnels.findIndex(x => x.tunnel_id === tid);
-    if (idx >= 0) {
+    if (editingTid) {
       await api("api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout, enabled } });
       toast("隧道已更新", "ok");
     } else {
