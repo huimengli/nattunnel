@@ -95,6 +95,7 @@
 ## Git 提交记录
 | hash | 类型 | 说明 | 状态 |
 |---|---|---|---|
+| `872ebe9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |
 | `1d4e4b5` | docs(AI) | deploy 文档 5b(WS 握手桥接验证) + README 自测环境说明 | **已本地 commit, 未 push** |
 | `cd9650c` | docs(AI) | progress 归档精简(107→精简版; 全量在 ai_buckup) | **已本地 commit, 未 push** |
 | `7a3b37a` | build(AI) | 重编译 exe + tools/exe_e2e_test.py(X1-X10; 24-26 轮全 PASS) | **已本地 commit, 未 push** |
