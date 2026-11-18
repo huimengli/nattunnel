@@ -2,7 +2,6 @@
 
 <!-- 已归档于 ai_buckup/progress.md_2026-11-18-18-06-00.md (120 行全量: 2026-09 与 2026-11-03~11-04 的会话条目、部署排障与踩坑全量均在备份) -->
 <!-- 2026-11-18 18:06 归档动作: 精简历史会话摘要与踩坑条目, 新增本次 Unity UDP 入口会话条目 -->
-
 ## 项目目标
 无公网 IP 电脑 ⇄ 有公网 IP 服务器(nginx 反代 www.xxx.com): 客户端 exe 将本机端口转发到 `www.xxx.com/tunnel/<8位短链>`。
 技术栈: Python / FastAPI / MySQL / Redis / JWT / RSA 登录 / WebSocket 中继; 用户系统(管理员首启初始化, 代码无硬编码)。
@@ -37,10 +36,10 @@
 - [x] 管理页“编辑隧道”保存(2026-11-04): `editingTid` 判定 + 编辑态 ID 只读; 台架 3 轮全 PASS
 - [x] exe 双下载通道(登录态 API + 静态直链, 单副本 server/app/static/)
 - [x] 隧道配置项 `header_timeout_s`(2026-11-04): 响应头窗口 默认30/上限600, 逐请求读库(改后下一个请求生效); 阶段 F 9 项 3 轮全 PASS
-- [x] **UDP 原生入口(2026-11-18)**: `udp_port`/`udp_allow` + `udp_relay.py` + `GET /api/udp/status` + 管理页 Unity 提示 + 阶段 G 21 项 + 台架 20 轮 9/9 全 PASS
+- [x] **UDP 原生入口(2026-11-18)**: `udp_port`/`udp_allow` + `udp_relay.py` + `GET /api/udp/status` + 管理页 Unity 提示 + 阶段 G 21 项 + 台架 20 轮 9/9 + 清理复验 3 轮 9/9 全 PASS
 - [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`; 部署后改管理员密码(步骤见 docs/deploy-keliit-top.md)
 - [ ] `tcp+udp` 同端口双栈混合(2026-11-03 用户选方案A, 列为后续需求)
-- [ ] Unity 真机(UnityTransport) + 真实公网/防火墙入站 UDP 验一次; 客户端首包修复后重编译 exe(`client\build.bat`) 并 `tools/exe_e2e_test.py` 验收
+- [ ] Unity 真机(UnityTransport) + 真实公网/防火墙入站 UDP 验一次; 重编译 exe(`client\build.bat`, 需 `python` 在 PATH — 本会话受阻, 见 todo) 并 `tools/exe_e2e_test.py` 验收
 ## 会话摘要(最近)
 ### 2026-11-18 13:03 — records/2026-11-18-13-03-15.md (Unity 标准 UDP 入口, 分支 feature/AI_Unity)
 - 需求原文: “现在项目的 UDP 不是标准的 UDP 端口映射, 我需要给 UNITY 用…新增一个 unity 选项? 走分支 feature/AI_Unity”。定案: **不新增 `proto=unity`** —— Unity 用的就是标准 UDP(新增取值=同一语义两个名字); Unity 入口 = `udp` 隧道 + `udp_port`/`udp_allow` + 管理页提示 + `docs/unity-ngo.md`。
