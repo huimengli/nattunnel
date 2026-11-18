@@ -14,8 +14,7 @@
 - 带宽由客户端令牌桶执行(双向共用, kbps, 0=不限)。
 - 中继与 UDP 房间状态都在进程内存(Redis 记在线/限流) → **必须单 worker**。
 - **协议语义(2026-11-03)**: `http` = 混合(浏览器直开逐请求直转 + WS 握手桥接 + 子协议裸流); `tcp` = 原生字节流(纯 HTTP → 400); `udp` = 数据报(WS 握手 → 400)。
-- **UDP 原生入口(2026-11-18)**: `udp` 隧道可配 `udp_port`(公网 UDP 端口)+ `udp_allow`(源 IP 白名单); 服务器在该端口直接收发数据报(nginx 不参与);
-  每个源 `ip:port` = 一个 peer_id(与子协议裸流共用房间与 `0x41` 帧); Unity `UnityTransport` 填 `Server Address=公网IP` + `Server Port=udp_port`(`docs/unity-ngo.md`)。
+- **UDP 原生入口(2026-11-18)**: `udp` 隧道可配 `udp_port`(公网 UDP 端口)+ `udp_allow`(源 IP 白名单); 服务器在该端口直接收发数据报(nginx 不参与); 每个源 `ip:port` = 一个 peer_id(与子协议裸流共用房间与 `0x41` 帧); Unity `UnityTransport` 填 `Server Address=公网IP` + `Server Port=udp_port`(`docs/unity-ngo.md`)。
 - 公网侧 WS 归属: Bearer→LAN; 子协议 `nattunnel-relay`→帧协议裸流; 其余(浏览器式)→ http_bridge 桥接到内网 WS 服务。
 - 存量 `proto=tcp`(旧浏览器直开语义)首启一次性迁移为 `http`(`proto_tcp_to_http_v1` 标记)。
 
@@ -47,8 +46,7 @@
 
 ## 会话摘要(最近)
 ### 2026-11-18 13:03 — records/2026-11-18-13-03-15.md (Unity 标准 UDP 入口, 分支 feature/AI_Unity)
-- 需求原文: “现在项目的 UDP 不是标准的 UDP 端口映射, 我需要给 UNITY 用…新增一个 unity 选项? 走分支 feature/AI_Unity”。
-- 定案: **不新增 `proto=unity`** —— Unity 用的就是标准 UDP(与 `udp` 语义一致, 新增取值=同一语义两个名字); Unity 入口 = `udp` 隧道 + `udp_port`/`udp_allow` + 管理页提示 + `docs/unity-ngo.md`。
+- 需求原文: “现在项目的 UDP 不是标准的 UDP 端口映射, 我需要给 UNITY 用…新增一个 unity 选项? 走分支 feature/AI_Unity”。定案: **不新增 `proto=unity`** —— Unity 用的就是标准 UDP(新增取值=同一语义两个名字); Unity 入口 = `udp` 隧道 + `udp_port`/`udp_allow` + 管理页提示 + `docs/unity-ngo.md`。
 - `server/app/udp_relay.py`(新): `UdpPeer`(与 LAN 侧 `_QueuePub` 接口兼容, 只投 `0x41` payload)/`UdpEndpoint`(asyncio DatagramProtocol: 白名单/尺寸/对端上限校验, 新源地址→建 peer)/`UdpHub`(port→端点; bind/sync/unbind; 启动时按库绑定; 5s GC 回收空闲 `UDP_IDLE_TIMEOUT=60`)。
 - `main.py`: lifespan 起停 hub + `GET /api/udp/status`(仅登录); `routers/tunnels.py`: 公网 UDP 端口唯一(409 提示占用者)、非 `udp` 清空字段、保存后 `sync`、删除 `unbind`; `config.py` 五参数 + `.env.example` UDP 段; `models.py`/`seed.py` 幂等 ALTER。
 - 管理页: `UDP 端口(公网)` 列 + `tm-udpport`/`tm-udpallow` + Unity(UnityTransport 填法 + 防火墙入站 UDP) 提示 + 启动片段 UDP 段; `saveTunnel` 校验“UDP 端口仅 udp 隧道”。
@@ -56,15 +54,13 @@
 - 实测: 台架 `tools/unity_udp_test.py` **20 轮 9/9 全 PASS**(每轮 selftest 53 项 阶段 A-G + api_check 26 项) → tests/2026-11-18-13-03-15_cc/(record_1..20 + opinion.md), 累积 tests/opinion.md。
 
 ### 2026-11-04 20:17 — records/2026-11-04-20-17-27.md (管理页“编辑隧道”保存: 大小写短链)
-- 根因: `saveTunnel()` 用大写化后的输入查表判编辑/新建 → `smGvs9xQ` ≠ `SMGVS9XQ` → POST + 大写 ID → MySQL CI → 409; 修复: `editingTid` 判定 + 编辑态 ID 只读 + 8 位大小写正则; 台架 `tools/admin_ui_logic_test.js` 3 轮全 PASS(基线 `d3ec4ae`); 部署只需覆盖 index.html(无需重启)。
+- 根因: `saveTunnel()` 用大写化输入查表判编辑/新建 → `smGvs9xQ` ≠ `SMGVS9XQ` → POST → MySQL CI → 409; 修复: `editingTid` + 编辑态 ID 只读 + 8 位大小写正则; 台架 3 轮全 PASS; 部署只需覆盖 index.html(无需重启)。
 
 ### 2026-11-04 19:06 — records/2026-11-04-19-06-38.md (断线诊断 + header_timeout_s)
-- 504 起算点在**请求体全部入隧后 20 秒**(`_HEADER_TIMEOUT`), 46 图 prefill 必然超时; 1011 keepalive 是这条链的下游表现, 不是真断线(nginx WS 会话 17.6MB/67s ≈ 2Mbps)。
-- 新增 `header_timeout_s`(默认 30, 1..600) 与 `bandwidth_kbps` 同管线(逐请求读库, 不推 T_CONFIG); WS 握手窗口固定 20 秒; 阶段 F 9 项 3 轮全 PASS; 待办: 生产建议 llm 隧道设 300 + 核实 nginx `proxy_read_timeout`。
+- 504 起算点在**请求体全部入隧后 20 秒**(`_HEADER_TIMEOUT`), 46 图 prefill 必然超时; 1011 keepalive 是下游表现, 不是真断线(nginx 会话 17.6MB/67s ≈ 2Mbps)。新增 `header_timeout_s`(默认 30, 1..600) 与 `bandwidth_kbps` 同管线(逐请求读库, 不推 T_CONFIG); WS 握手窗口固定 20 秒; 阶段 F 9 项 3 轮全 PASS; 待办: 生产 llm 隧道设 300 + 核实 nginx `proxy_read_timeout`。
 
 ### 2026-11-03 13:21 — records/2026-11-03-13-21-03.md (协议改造 http/tcp/udp + WS 握手桥接)
-- `relay.py`: `PROTOS=(http,tcp,udp)` + `RELAY_SUBPROTOCOL="nattunnel-relay"` + `data_type(proto)` + `alloc_peer(room)`; `http_bridge.py` 新增 `WSCodec`(最小 RFC6455 客户端编解码) + 握手透传(101 用同一 key 完成 accept 并回带子协议) + `_ws_reject` 预拒绝; 纯 HTTP 直转限定 `proto == "http"`。
-- 客户端 `proto in ("tcp","http")` 走字节流管道, 仅切 `udp` 需重连; 方案A(用户拍板): 不新增 mixed 协议, `http` 即混合; 20 轮全 PASS(selftest 32 + api_check 18)。
+- `relay.py`: `PROTOS=(http,tcp,udp)` + `RELAY_SUBPROTOCOL` + `data_type(proto)` + `alloc_peer(room)`; `http_bridge.py` 新增 `WSCodec`(最小 RFC6455 编解码) + 握手透传(101 用同一 key 完成 accept 并回带子协议) + `_ws_reject` 预拒绝; 纯 HTTP 直转限定 `http`; 客户端 `proto in (tcp,http)` 走字节流, 仅切 `udp` 需重连; 方案A(用户拍板): 不新增 mixed, `http` 即混合; 20 轮全 PASS(32+18)。
 
 ## 踩坑备忘(后续会话必读)
 1. **PyInstaller --onefile 是双进程**: 杀 exe 用 `taskkill /F /IM nattunnel-client.exe`(父进程 kill 会留孤儿子进程)。
@@ -98,7 +94,7 @@
 | hash | 类型 | 说明 | 状态 |
 |---|---|---|---|
 | `2dd3a20` | feat(AI) | UDP 原生入口(`udp_port`/`udp_allow` + `udp_relay.py` + `/api/udp/status` + 管理页 Unity 提示 + 客户端首包竞态修复; 20 轮 9/9 全 PASS) | **已本地 commit, 未 push** |
-| `PENDING` | docs(AI) | progress 归档(120 行全量入 ai_buckup) + 本次会话条目 + tree/README/unity 文档 | **已本地 commit, 未 push** |
+| `c79f236` | docs(AI) | progress 归档(120 行全量入 ai_buckup) + 本次会话条目 + tree/README/unity 文档 | **已本地 commit, 未 push** |
 | `7844f34` | fix(AI) | 管理页“编辑隧道”保存走 POST → 409(大小写短链); 台架 3 轮全 PASS | **已本地 commit, 未 push** |
 | `d3ec4ae` | docs(AI) | progress 追加本次会话条目(断线诊断 + header_timeout_s) | **已本地 commit, 未 push** |
 | `872ede9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |
