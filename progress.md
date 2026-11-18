@@ -48,10 +48,9 @@
 - 管理页: `UDP 端口(公网)` 列 + `tm-udpport`/`tm-udpallow` + Unity(UnityTransport 填法 + 防火墙入站 UDP) 提示 + 启动片段 UDP 段; `saveTunnel` 校验“UDP 端口仅 udp 隧道”。
 - 客户端 `run_udp` **首包竞态修复**(`peer_tasks`: `U_DATA` 早于建端任务完成时先 `await` 再投数据) —— 与 2026-11-03 TCP 路径同款同法; exe 需重编译才生效。
 - 实测: 台架 `tools/unity_udp_test.py` **20 轮 9/9 全 PASS**(每轮 selftest 53 项 阶段 A-G + api_check 26 项) → tests/2026-11-18-13-03-15_cc/(record_1..20 + opinion.md), 累积 tests/opinion.md。
-
+- 追加(19:23 需求, 纯文档): `docs/unity-noties.md` 已知限制清单(A 架构语义 / B 资源与攻击面 / C 运维部署 / D 测试缺口 / E 本会话已修) → records/2026-11-18-19-23-43.md。
 ### 2026-11-04 20:17 — records/2026-11-04-20-17-27.md (管理页“编辑隧道”保存: 大小写短链)
 - 根因: `saveTunnel()` 用大写化输入查表判编辑/新建 → `smGvs9xQ` ≠ `SMGVS9XQ` → POST → MySQL CI → 409; 修复: `editingTid` + 编辑态 ID 只读 + 8 位大小写正则; 台架 3 轮全 PASS; 部署只需覆盖 index.html(无需重启)。
-
 ### 2026-11-04 19:06 — records/2026-11-04-19-06-38.md (断线诊断 + header_timeout_s)
 - 504 起算点在**请求体全部入隧后 20 秒**(`_HEADER_TIMEOUT`), 46 图 prefill 必然超时; 1011 keepalive 是下游表现, 不是真断线(nginx 会话 17.6MB/67s ≈ 2Mbps)。新增 `header_timeout_s`(默认 30, 1..600) 与 `bandwidth_kbps` 同管线(逐请求读库, 不推 T_CONFIG); WS 握手窗口固定 20 秒; 阶段 F 9 项 3 轮全 PASS; 待办: 生产 llm 隧道设 300 + 核实 nginx `proxy_read_timeout`。
 
@@ -90,6 +89,7 @@
 | `c79f236` | docs(AI) | progress 归档(120 行全量入 ai_buckup) + 本次会话条目 + tree/README/unity 文档 | **已本地 commit, 未 push** |
 | `2572c29` | docs(AI) | progress 精简至 100 行内 + 补 hash(本表后续 hash 见 `git log`) | **已本地 commit, 未 push** |
 | `2ef85ec` | chore(AI) | 删除 UDP 首包竞态排查期间的 `[dbg]` 临时诊断日志(3 处) + 复验 3 轮 9/9(record_21..23) | **已本地 commit, 未 push** |
+| `PENDING` | docs(AI) | `docs/unity-noties.md`: Unity 原生 UDP 入口已知限制清单(A-E) + record/todo/tree 落盘 | **已本地 commit, 未 push** |
 | `7844f34` | fix(AI) | 管理页“编辑隧道”保存走 POST → 409(大小写短链); 台架 3 轮全 PASS | **已本地 commit, 未 push** |
 | `d3ec4ae` | docs(AI) | progress 追加本次会话条目(断线诊断 + header_timeout_s) | **已本地 commit, 未 push** |
 | `872ede9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |

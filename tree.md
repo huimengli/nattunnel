@@ -60,6 +60,7 @@ nattunnel/
 │
 ├── docs/                      # 部署与集成指南
 │   ├── deploy-keliit-top.md   # keliit.top 子路径混部完整步骤(含 UDP 入站端口)
+│   ├── unity-noties.md        # Unity 原生 UDP 入口已知限制清单(架构/资源/运维/缺口/已修)
 │   └── unity-ngo.md           # Unity(NGO/UnityTransport) 接标准 UDP 入口: 填法/限制/踩坑
 └── tools/                       # 公网侧/端到端测试工具(需 pip install websockets)
     ├── ws_tcp_test.py           # 子协议 nattunnel-relay 字节流裸流(HELLO/echo)

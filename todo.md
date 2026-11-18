@@ -28,3 +28,4 @@
   - [ ] 生产: 服务器放行**入站 UDP** + 网页建 udp 隧道配 `udp_port` + Unity 真机(UnityTransport) 连一次(台架是 127.0.0.1 回环)
   - [ ] 生产: 客户端源码已改(首包竞态) → 重编译 exe 并用 `tools/exe_e2e_test.py` 验收; 本机受阻: `client\build.bat` 需 `python` 在 PATH(它自建 client\.venv 并 pip 装 pyinstaller), 本会话 PATH=System32 时 `python not found` 直接退出(未产出新 exe);
         请在终端跑 `client\build.bat -s www.keliit.top/tunnel/`(build.bat 会重写 build_config.py, 本会话已把被默认值 127.0.0.1:8000 覆盖的文件还原为生产地址)
+- [x] 2026-11-18-19-23-43 docs/unity-noties.md: Unity 原生 UDP 入口**已知限制清单**(A 架构语义 / B 资源与攻击面 / C 运维部署 / D 测试缺口 / E 本次已修) (→ records/2026-11-18-19-23-43.md)
