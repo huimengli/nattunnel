@@ -74,8 +74,7 @@
 15. **同进程“回显 + 收包”必须非阻塞**: 自测 `udp_native` 用阻塞 `recv` 会饿死事件循环 → 同进程的回显服务永不触发(阶段 G5-G8 必失败); 改 `setblocking(False)` + `await asyncio.sleep` 轮询。
 16. **改 import 不要整块替换**: 为加 `/api/udp/status` 重排 `main.py` import 时删掉 `from .relay import (...)` → `RELAY_SUBPROTOCOL` 未定义 + 握手未完成表征, 自测 A-E/G 的“lan 侧上线”全 FAIL(不是语法错误, 难一眼看出)。
 17. **UDP 入口首包竞态(与 TCP 同款)**: `run_udp` 的 `T_NEW` 建端是 `create_task`, 首包 `U_DATA` 早于其完成 → `peers.get(pid)` 为 None 丢首包; **服务端加睡眠无效**(帧已在客户端缓冲), 必须客户端 `await peer_tasks[pid]` 再投数据。
-18. **台架 Windows 细节**: `stdin=subprocess.DEVNULL` 使 `isatty()` 为真 → 服务器走首启向导后 `SystemExit: 已取消`(用 `stdin=PIPE`); 进程退出后 sqlite 文件释放有延迟(删库需重试); 父进程 GBK 控制台打印中文需 `sys.stdout.reconfigure` + 子进程 `PYTHONIOENCODING=utf-8`。
-## 风险 / 注意事项
+18. **台架 Windows 细节**: `stdin=subprocess.DEVNULL` 使 `isatty()` 为真 → 服务器走首启向导后 `SystemExit: 已取消`(用 `stdin=PIPE`); 进程退出后 sqlite 文件释放有延迟(删库需重试); 父进程 GBK 控制台打印中文需 `sys.stdout.reconfigure` + 子进程 `PYTHONIOENCODING=utf-8`。## 风险 / 注意事项
 1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
 2. 多 worker 会破坏内存中继(含 UDP 房间); 扩缩容需先做 Redis Pub/Sub 化(未来工作)。
 3. 字节流为“每公网连接一条”, 不支持半关等细粒度语义(对 RDP/SSH/HTTP/WS 足够)。
@@ -89,7 +88,8 @@
 | `c79f236` | docs(AI) | progress 归档(120 行全量入 ai_buckup) + 本次会话条目 + tree/README/unity 文档 | **已本地 commit, 未 push** |
 | `2572c29` | docs(AI) | progress 精简至 100 行内 + 补 hash(本表后续 hash 见 `git log`) | **已本地 commit, 未 push** |
 | `2ef85ec` | chore(AI) | 删除 UDP 首包竞态排查期间的 `[dbg]` 临时诊断日志(3 处) + 复验 3 轮 9/9(record_21..23) | **已本地 commit, 未 push** |
-| `PENDING` | docs(AI) | `docs/unity-noties.md`: Unity 原生 UDP 入口已知限制清单(A-E) + record/todo/tree 落盘 | **已本地 commit, 未 push** |
+| `6d8bc15` | docs(AI) | `docs/unity-noties.md`: Unity 原生 UDP 入口已知限制清单(A-E) + record/todo/tree 落盘 | **已本地 commit, 未 push** |
+| `25c8805` | docs(AI) | unity-ngo 顶部加 unity-noties 交叉引用 | **已本地 commit, 未 push** |
 | `7844f34` | fix(AI) | 管理页“编辑隧道”保存走 POST → 409(大小写短链); 台架 3 轮全 PASS | **已本地 commit, 未 push** |
 | `d3ec4ae` | docs(AI) | progress 追加本次会话条目(断线诊断 + header_timeout_s) | **已本地 commit, 未 push** |
 | `872ede9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |
