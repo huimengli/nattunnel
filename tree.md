@@ -23,7 +23,7 @@ nattunnel/
 │   ├── 2026-11-03-13-21-03_cc/  # 本批次 20 轮: record_1..20.md + opinion.md
 │   ├── 2026-11-04-19-06-38_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md
 │   ├── 2026-11-04-20-17-27_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md(台架对照)
-│   └── 2026-11-18-13-03-15_cc/  # 本批次 20 轮: record_1..20.md + opinion.md(Unity UDP 原生入口)
+│   └── 2026-11-18-13-03-15_cc/  # 本批次 20 轮 + 清理复验 3 轮: record_1..23.md + opinion.md(Unity UDP 原生入口)
 │
 ├── server/                      # FastAPI 后端(单 worker)
 │   ├── requirements.txt         # fastapi/uvicorn[standard]/sqlalchemy/pymysql/cryptography/PyJWT/redis/python-dotenv

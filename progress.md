@@ -90,6 +90,7 @@
 | `2dd3a20` | feat(AI) | UDP 原生入口(`udp_port`/`udp_allow` + `udp_relay.py` + `/api/udp/status` + 管理页 Unity 提示 + 客户端首包竞态修复; 20 轮 9/9 全 PASS) | **已本地 commit, 未 push** |
 | `c79f236` | docs(AI) | progress 归档(120 行全量入 ai_buckup) + 本次会话条目 + tree/README/unity 文档 | **已本地 commit, 未 push** |
 | `2572c29` | docs(AI) | progress 精简至 100 行内 + 补 hash(本表后续 hash 见 `git log`) | **已本地 commit, 未 push** |
+| `2ef85ec` | chore(AI) | 删除 UDP 首包竞态排查期间的 `[dbg]` 临时诊断日志(3 处) + 复验 3 轮 9/9(record_21..23) | **已本地 commit, 未 push** |
 | `7844f34` | fix(AI) | 管理页“编辑隧道”保存走 POST → 409(大小写短链); 台架 3 轮全 PASS | **已本地 commit, 未 push** |
 | `d3ec4ae` | docs(AI) | progress 追加本次会话条目(断线诊断 + header_timeout_s) | **已本地 commit, 未 push** |
 | `872ede9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |
