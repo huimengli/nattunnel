@@ -10,6 +10,8 @@
   C. 令牌绑定隧道: 无 tunnel_id 的令牌定位隧道
   D. 纯 HTTP 直转: http 隧道逐请求直转发 + <base> 注入 + tcp 隧道拒绝(400) + 离线 503
   E. WebSocket 握手桥接: 内网 WS 服务经隧道拿到 101, 数据帧/子协议/文本帧双向往返(udp 拒绝)
+  G. UDP 原生入口(标准 UDP 端口映射): 服务器上的 `IP:udp_port` 直连数据报往返、源地址=对端、
+     源 IP 白名单、端口唯一性与改绑、停用解绑、空闲回收、超包丢弃、与 WS 裸流共存(Unity 场景)
 
 用法(凭据不入库, 从参数或环境变量提供):
     set NATTUNNEL_TEST_PASSWORD=...        (或 --password)
@@ -304,6 +306,182 @@ async def phase_udp(server: str, token: str) -> None:
         await delete_tunnel(server, tid, token)
         echo_transport.close()
 
+
+
+# ------------------------------------------------------------- 阶段 G: UDP 原生入口(标准 UDP 端口)
+
+UDP_TEST_BASE = 25000        # 自测用的公网 UDP 端口起点(回环上绑定)
+
+
+def _free_udp_port(base: int) -> int:
+    """挑一个可绑定的空闲 UDP 端口(自测在回环上跑)。"""
+    import socket
+    for p in range(base, base + 60):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.bind(("127.0.0.1", p))
+            return p
+        except OSError:
+            continue
+        finally:
+            probe.close()
+    raise RuntimeError("没有可用的自测 UDP 端口")
+
+
+async def udp_native(target: tuple, payload: bytes, wait: float = 6.0, bind: str = None) -> bytes | None:
+    """纯 UDP 往返(完全不走 WebSocket): 发一个数据报, 收一个回包; 无回包返回 None。
+
+    connected UDP(与 UnityTransport 的行为一致): 只接受该对端的回包。
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if bind:
+        s.bind((bind, 0))
+    s.connect(target)
+    # 必须非阻塞轮询: 本进程里同时跑着内网回显服务(asyncio),
+    # 阻塞 recv 会饿死事件循环 -> 回显永远不触发, 测试必然超时(踩坑备忘)。
+    s.setblocking(False)
+    try:
+        s.send(payload)
+    except OSError as exc:
+        print(f"  [WARN] sendto 失败({target}): {exc}")
+        s.close()
+        return None
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        try:
+            return s.recv(65536)
+        except BlockingIOError:
+            await asyncio.sleep(0.02)
+        except OSError as exc:
+            print(f"  [WARN] recv 失败({target}): {exc}")
+            break
+    s.close()
+    return None
+
+
+async def phase_udp_native(server: str, token: str) -> None:
+    print("\n== 阶段 G: UDP 原生入口(标准 UDP 端口映射, Unity/UnityTransport 场景) ==")
+    echo_transport, port = await start_udp_echo()
+    udp_port = _free_udp_port(UDP_TEST_BASE)
+    tid = None
+    client_task = None
+    try:
+        out = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-udp-native", "proto": "udp", "local_port": port, "udp_port": udp_port,
+        })
+        tid = out["tunnel_id"]
+        check("G1 建 udp 隧道 + udp_port 回显", out.get("udp_port") == udp_port, repr(out.get("udp_port")))
+        st = http_json(server, "/api/udp/status", token=token)
+        eps = [e for e in st.get("endpoints", []) if e["tunnel_id"] == tid]
+        check("G2 服务端已绑定公网 UDP 端口", bool(eps) and eps[0]["port"] == udp_port, repr(eps))
+        max_dg = int(st.get("max_datagram") or 0)
+        check("G3 公网入口展示串(Unity 填的 Server Address:Port)",
+              bool(eps) and (eps[0].get("public") or "").endswith(f":{udp_port}"), repr(eps and eps[0].get("public")))
+
+        client_task = start_client(server, tid, token)
+        online = await wait_lan_online(server, tid, token)
+        check("G4 客户端 lan 侧上线", online)
+        if not online:
+            return
+
+        target = ("127.0.0.1", udp_port)
+        reply = await udp_native(target, b"unity-hello")
+        check("G5 标准 UDP 数据报往返(无 WS/子协议)", reply == b"unity-hello", repr(reply))
+
+        reply2 = await udp_native(target, b"peer-two", bind="127.0.0.2")
+        check("G6 第二个源地址=独立对端 (echo)", reply2 == b"peer-two", repr(reply2))
+        st = http_json(server, "/api/udp/status", token=token)
+        peers = [e[0]["peers"] for e in [[x for x in st.get("endpoints", []) if x["tunnel_id"] == tid]]]
+        check("G7 对端计数=2(两个源地址)", peers and peers[0] == 2, repr(peers))
+
+        blob = bytes(range(256)) * 6   # 1536B(> Unity MTU 1400)
+        reply3 = await udp_native(target, blob)
+        check("G8 二进制 1536B 数据报完整往返", reply3 == blob,
+              f"len={len(reply3) if reply3 else 0}")
+
+        big = b"x" * (max_dg + 400)    # harness 把 UDP_MAX_DATAGRAM 设小(1600)以便验证
+        reply4 = await udp_native(target, big, wait=2.0)
+        check("G9 超 UDP_MAX_DATAGRAM 的数据报丢弃(无回包)", reply4 is None, repr(max_dg))
+
+        # 源 IP 白名单: 只放行 127.0.0.1 -> 127.0.0.2 被拒, 127.0.0.1 放行
+        http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"udp_allow": "127.0.0.1"})
+        await asyncio.sleep(0.4)
+        reply5 = await udp_native(target, b"blocked?", bind="127.0.0.2")
+        check("G10 udp_allow 拒绝非白名单源", reply5 is None, repr(reply5))
+        reply6 = await udp_native(target, b"allowed")
+        check("G11 udp_allow 放行白名单源", reply6 == b"allowed", repr(reply6))
+        http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"udp_allow": "127.0.0.0/8"})
+        await asyncio.sleep(0.4)
+        reply7 = await udp_native(target, b"cidr", bind="127.0.0.2")
+        check("G12 CIDR 白名单放行", reply7 == b"cidr", repr(reply7))
+
+        # 同一隧道: UDP 入口与 WS 子协议裸流共存(共用房间与帧)
+        url = server.replace("http://", "ws://") + f"/tunnel/{tid}"
+        async with websockets.connect(url, max_size=1 << 20, subprotocols=[RELAY_SUBPROTOCOL]) as ws:
+            pid = None
+            while pid is None:
+                t, p, _ = split_frame(await asyncio.wait_for(ws.recv(), timeout=10))
+                if t == 0x05:
+                    pid = p
+            await ws.send(build_frame(0x41, pid, b"relay-coexist"))
+            r21 = None
+            deadline = time.time() + 8
+            while time.time() < deadline:
+                try:
+                    t, p, payload = split_frame(await asyncio.wait_for(ws.recv(), timeout=deadline - time.time()))
+                except TimeoutError:
+                    break
+                if p == pid and t == 0x41:
+                    r21 = payload
+                    break
+        check("G21 同隧道 WS 子协议裸流与 UDP 入口共存", r21 == b"relay-coexist", repr(r21))
+
+        # 改公网端口: 新入口通, 旧端口解绑
+        new_port = _free_udp_port(udp_port + 1)
+        http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"udp_port": new_port})
+        await asyncio.sleep(0.6)
+        r8 = await udp_native(("127.0.0.1", new_port), b"moved", bind="127.0.0.1")
+        r9 = await udp_native(("127.0.0.1", udp_port), b"old", wait=2.0)
+        check("G13 改端口后新 UDP 入口通", r8 == b"moved", repr(r8))
+        check("G14 旧端口已解绑(无回包)", r9 is None, repr(r9))
+
+        # 空闲回收(自测把 UDP_IDLE_TIMEOUT 设为 6 秒)
+        await udp_native(("127.0.0.1", new_port), b"idle-probe")
+        await asyncio.sleep(13)
+        st = http_json(server, "/api/udp/status", token=token)
+        peers2 = [e["peers"] for e in st.get("endpoints", []) if e["tunnel_id"] == tid]
+        check("G19 空闲超时回收对端(peers 归零)", peers2 and peers2[0] == 0, repr(peers2))
+
+        # 端口唯一性: 同端口给第二条隧道 -> 409
+        try:
+            http_json(server, "/api/tunnels", method="POST", token=token, body={
+                "name": "selftest-udp-conflict", "proto": "udp", "local_port": port, "udp_port": new_port})
+            check("G15 公网 UDP 端口冲突被拒(409)", False, "未拒绝")
+        except urllib.error.HTTPError as e:
+            check("G15 公网 UDP 端口冲突被拒(409)", e.code == 409, f"code={e.code}")
+
+        # 停用 -> 解绑
+        http_json(server, f"/api/tunnels/{tid}", method="PATCH", token=token, body={"enabled": False})
+        await asyncio.sleep(0.6)
+        r10 = await udp_native(("127.0.0.1", new_port), b"disabled", wait=2.0)
+        check("G16 停用后 UDP 入口解绑(无回包)", r10 is None, repr(r10))
+        st = http_json(server, "/api/udp/status", token=token)
+        check("G17 停用后端点表无该隧道", all(e["tunnel_id"] != tid for e in st.get("endpoints", [])))
+
+        # 非 udp 隧道的 udp_port 应被清空(不占用端口)
+        out2 = http_json(server, "/api/tunnels", method="POST", token=token, body={
+            "name": "selftest-http-udpport", "proto": "http", "local_port": port, "udp_port": new_port})
+        check("G18 非 udp 隧道的 udp_port 被清空", out2.get("udp_port") is None, repr(out2.get("udp_port")))
+        await delete_tunnel(server, out2["tunnel_id"], token)
+
+    finally:
+        if client_task is not None:
+            await stop_client(client_task)
+        await delete_tunnel(server, tid, token)
+        echo_transport.close()
+        st = http_json(server, "/api/udp/status", token=token)
+        check("G20 删除隧道后 UDP 端点表清空", all(e["tunnel_id"] != tid for e in st.get("endpoints", [])))
 
 # ------------------------------------------------------------- 阶段 C: 令牌绑定隧道
 
@@ -627,6 +805,7 @@ async def main() -> None:
 
     await phase_tcp(server, token)
     await phase_udp(server, token)
+    await phase_udp_native(server, token)
     await phase_bound(server, token)
     await phase_http(server, token)
     await phase_ws(server, token)

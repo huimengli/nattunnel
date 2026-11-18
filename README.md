@@ -41,10 +41,14 @@
 | WS + 子协议 `nattunnel-relay`(帧协议裸流) | ✅ 字节流(等价 tcp) | ✅ 字节流 | ✅ 数据报 |
 | WS 握手(无该子协议, 浏览器式) | ✅ 桥接到内网 WS 服务 | ✅ 桥接 | ❌ 拒绝(400) |
 | 纯 HTTP 请求(无 Upgrade) | ✅ 逐请求直转 + `<base>` 注入 | ❌ 400 | ❌ 400 |
+| 标准 UDP 数据报(完全不经过 WS, 直连 `IP:udp_port`) | ❌ | ❌ | ✅(需配 `udp_port`) |
 
 - **http = 混合隧道**: 浏览器直开 + 页面内 WebSocket + 子协议裸流三种入口共存(同一端口, 无需建第二条隧道);
 - **tcp = 原生字节流**: WebSocket 握手与数据帧透传到内网服务(101 双向透明) + 子协议裸流; 纯 HTTP 直转语义已归入 `http`;
-- **udp**: 仅子协议裸流的数据报(无连接语义, 无 HTTP/WS 桥接);
+- **udp**: 子协议裸流的数据报(无连接语义, 无 HTTP/WS 桥接); **外加标准 UDP 入口**:
+  `udp` 隧道可配 `udp_port`(公网 UDP 端口)与 `udp_allow`(源 IP 白名单), 服务器在该端口上
+  就是标准 UDP 端点(nginx 不参与), 供 Unity `UnityTransport` 等只能讲 UDP 的客户端直连;
+  Unity 填法与限制见 `docs/unity-ngo.md`。
 - 浏览器 `new WebSocket()` **无法自定义头/子协议以外的头**, 因此"不带 `nattunnel-relay` 的 WS 握手"= 桥接;
   裸流工具(websockets 库)必须显式声明 `subprotocols=["nattunnel-relay"]`;
 - 存量 `proto=tcp`(原浏览器直开语义)在首次启动时**一次性**迁移为 `http`(`AppSetting` 记标记),
@@ -152,6 +156,7 @@ build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | 健康检查(redis 状态) |
+| GET | `/api/udp/status` | UDP 原生入口总览(仅登录): 监听/公网地址、回收参数、已绑定端点与对端数 |
 | GET | `/api/auth/public-key` | RSA 公钥(PEM) |
 | POST | `/api/login` | 二选一: `{secure_payload}`=base64(RSA(JSON)) 或 `{username,password}` (网页, 需 TLS) → JWT |
 | GET | `/api/me` | 当前用户; 令牌绑定隧道时附带 `tunnel_id` |
@@ -163,7 +168,7 @@ build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 | GET/POST | `/api/users` | 管理员: 列/建用户 `{username,password,role?}` |
 | DELETE | `/api/users/{username}` | 管理员: 删用户(级联删其隧道) |
 | GET | `/api/tunnels` | 我的隧道(admin 全部), 含 `lan_online`/`pub_count` |
-| POST | `/api/tunnels` | 建隧道 `{tunnel_id?(8位), name?, proto, local_port, bandwidth_kbps?}` |
+| POST | `/api/tunnels` | 建隧道 `{tunnel_id?(8位), name?, proto, local_port, bandwidth_kbps?, udp_port?, udp_allow?}`(公网 UDP 端口全服务器唯一, 冲突 409) |
 | GET/PATCH/DELETE | `/api/tunnels/{tid}` | 读/改(端口、协议、带宽、启用)/删 |
 | WS | `/tunnel/{tid}` | Bearer JWT 且属主/admin = LAN 侧; 子协议 `nattunnel-relay` = 帧协议裸流(每条连接一条流); 其余 WS 握手由桥接层透传到内网 WS 服务(http/tcp 隧道) |
 | HTTP | `/tunnel/{tid}[/子路径]` | 纯 HTTP 直转(**仅 http 隧道**): 浏览器直接打开短链访问内网 Web 服务; tcp/udp 隧道 → 400; 无 LAN 在线 → 503 |
@@ -183,6 +188,8 @@ build.bat -s https://www.xxx.com       # 产物 dist\nattunnel-client.exe
 - 字节流(http/tcp): 每个子协议裸流连接 = 一条流; LAN 侧收到 NEW_STREAM 后 connect `<local_target_host>:<local_port>`;
   `http`/`tcp` 隧道的 WS 握手桥接复用同一套字节流语义(桥接层做 HTTP/WS 语义, 客户端只做管道)。
 - UDP: 每个公网 WS 连接 = 一个对端; LAN 侧为该对端起 127.0.0.1 临时 socket, 数据报经隧道发到本机服务端口。
+- UDP 原生入口(`udp_port`): 每个源 `ip:port` = 一个 peer_id(与子协议裸流共用房间和 `0x41` 帧);
+  回包只发回该源地址(connected UDP 语义), 空闲 60s 回收, 每隧道 `UDP_MAX_PEERS` 上限。
 - 带宽: `bandwidth_kbps`(0=不限)由客户端令牌桶执行, 双向共用。
 
 ## 端到端自测(无需公网)
@@ -199,11 +206,15 @@ NATTUNNEL_TEST_PASSWORD=dev-only-12345 python tools/selftest.py --server http://
 python tools/api_check.py --admin-password dev-only-12345 --server http://127.0.0.1:8100
 
 # selftest 阶段: A=TCP 原生字节流+热更新; B=UDP; C=令牌绑定隧道; D=纯 HTTP 直转(http 隧道)+tcp 拒绝;
-#              E=WebSocket 握手桥接(内网 WS 服务经隧道 101/数据帧/子协议/文本帧往返, udp 拒绝)
+#              E=WebSocket 握手桥接(内网 WS 服务经隧道 101/数据帧/子协议/文本帧往返, udp 拒绝);
+#              G=UDP 原生入口(公网 UDP 端口: 数据报往返/多对端/白名单/超限丢弃/改端口/停用解绑/空闲回收/与子协议共存)
+# UDP 原生入口台架(每轮全新库+服务器, 含 selftest/api_check/静态页检查):
+#   python tools/unity_udp_test.py --rounds 20 --outdir tests/<时间>_cc
 # 公网侧(有真实服务器时)手工验证:
 python tools/ws_handshake_test.py wss://www.xxx.com/tunnel/<ID>/ws --send ping --sub chat
 python tools/ws_tcp_test.py wss://www.xxx.com/tunnel/<ID>          # 子协议 nattunnel-relay 裸流
 python tools/ws_udp_test.py wss://www.xxx.com/tunnel/<ID> --send ping
+python tools/udp_native_test.py <公网IP>:<udp_port> --send ping --wait 2   # 纯 UDP(不经 WS)
 
 # exe 端到端验收(真实构建产物 client/dist/nattunnel-client.exe, 服务器需在跑)
 python tools/exe_e2e_test.py --server http://127.0.0.1:8100 --password dev-only-12345 [--old-exe <旧构建路径>]
@@ -229,3 +240,5 @@ python tools/exe_e2e_test.py --server http://127.0.0.1:8100 --password dev-only-
 - 纯 HTTP 直转使内网 Web 服务可被浏览器**免认证直接访问**: 若该服务自身无登录/鉴权,
   请放在可信网络内或另行加防护(网关鉴权、IP 白名单等)。
 - 隧道 8 位短链可被猜到: 敏感业务请配合服务器防火墙限制源 IP, 或定期轮换 `tunnel_id`。
+- **UDP 原生入口(`udp_port`)不鉴权**(与子协议裸流、纯 HTTP 直转一致): 用 `udp_allow` 源 IP 白名单 +
+  随机高位端口 + 服务器防火墙; UDP 无握手, 服务端无法验证身份。

@@ -352,6 +352,8 @@ class DatagramProto(asyncio.DatagramProtocol):
         self.sockname = transport.get_extra_info("sockname")
 
     def datagram_received(self, data, addr):
+        log.info("[dbg] udp rx %dB from %s", len(data), addr)  # 临时诊断
+
         if self._fut is not None and not self._fut.done():
             self._fut.set_result((data, addr))
         else:
@@ -387,6 +389,8 @@ async def run_udp(ws, tcfg: dict, bucket: TokenBucket):
             return True
         return False
 
+    peer_tasks: dict[int, asyncio.Task] = {}  # pid -> 建端任务(数据帧早于建端完成的竞态, 与 TCP 路径同款处理)
+
     async def add_peer(pid: int) -> None:
         loop = asyncio.get_running_loop()
         transport, proto = await loop.create_datagram_endpoint(
@@ -413,6 +417,9 @@ async def run_udp(ws, tcfg: dict, bucket: TokenBucket):
                  pid, proto.sockname[1] if proto.sockname else "?", live["host"], live["port"])
 
     async def drop_peer(pid: int) -> None:
+        task = peer_tasks.pop(pid, None)
+        if task is not None and not task.done():
+            task.cancel()
         entry = peers.pop(pid, None)
         if entry is None:
             return
@@ -429,14 +436,21 @@ async def run_udp(ws, tcfg: dict, bucket: TokenBucket):
             msg = await ws.recv()
             type_, pid, payload = split_frame(msg)
             if type_ == T_NEW:
-                asyncio.create_task(add_peer(pid))
+                peer_tasks[pid] = asyncio.create_task(add_peer(pid))
             elif type_ == U_DATA:
                 entry = peers.get(pid)
                 if entry is None:
-                    continue
+                    # 数据帧早于建端完成到达(首包竞态): 等建端任务结束再投
+                    task = peer_tasks.get(pid)
+                    if task is not None and not task.done():
+                        await task
+                    entry = peers.get(pid)
+                    if entry is None:
+                        continue
                 if not payload:
                     continue
                 await bucket.consume(len(payload))
+                log.info("[dbg] peer %s sendto %dB -> %s:%s", pid, len(payload), live["host"], live["port"])  # 临时诊断
                 entry["transport"].sendto(payload, (live["host"], live["port"]))  # sendto 是同步方法
             elif type_ == T_CLOSE:
                 await drop_peer(pid)

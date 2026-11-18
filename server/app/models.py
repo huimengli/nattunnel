@@ -35,6 +35,10 @@ class Tunnel(Base):
     bandwidth_kbps: Mapped[int] = mapped_column(Integer, default=0)
     # 响应头等待窗口(秒), 1..600; 服务端 http 隧道专用(请求体入隧后起算)
     header_timeout_s: Mapped[int] = mapped_column(Integer, default=30)
+    # 公网 UDP 端口(标准 UDP 入口, Unity Transport 等直连): 仅 udp 隧道; None = 不开
+    udp_port: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # UDP 入口源 IP 白名单(逗号分隔 IP/CIDR/前缀), 空 = 放行全部(UDP 入口不鉴权)
+    udp_allow: Mapped[str] = mapped_column(String(255), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

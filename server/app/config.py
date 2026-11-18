@@ -39,3 +39,15 @@ PORT = int(_get("PORT", "8000") or 8000)
 
 # WebSocket 单帧最大载荷(1 MiB), 客户端分片远小于此值
 WS_MAX_SIZE = 1 << 20
+
+# ---------------- UDP 原生入口(标准 UDP 端口映射, 供 Unity Transport 等标准 UDP 客户端) ----------------
+# 监听地址: 公网 UDP 必须直接到达本进程(不经 nginx), 默认全网卡; 本机自测/混部建议 127.0.0.1
+UDP_LISTEN_HOST = _get("UDP_LISTEN_HOST", "0.0.0.0")
+# 管理页展示的公网地址(填服务器公网 IP; Unity 的 Server Address 官方语义是 IPv4)。留空则显示监听地址
+UDP_PUBLIC_HOST = _get("UDP_PUBLIC_HOST", "")
+# 对端(源地址)空闲回收时间(秒): 无数据报超过该时间即拆该对端并通知 LAN 侧
+UDP_IDLE_TIMEOUT = int(_get("UDP_IDLE_TIMEOUT", "60") or 60)
+# 单隧道最大并发对端数(源地址数)
+UDP_MAX_PEERS = int(_get("UDP_MAX_PEERS", "64") or 64)
+# 单个数据报最大字节(超过丢弃; Unity Netcode 的 MTU 一般 1400, 64KiB 足够)
+UDP_MAX_DATAGRAM = int(_get("UDP_MAX_DATAGRAM", "65536") or 65536)

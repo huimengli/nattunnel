@@ -173,5 +173,14 @@ FLUSH PRIVILEGES;
 - **端口**: `python run.py --port 9000` 只在 CLI/systemd 里生效; nginx 两处 `proxy_pass`
   必须指向同一端口, 防火墙不放通该端口。
 - **启动卡在重试 db init**: 上面 MySQL 问题的表现(每 2s 重试 6 次后退出); 或 Redis/DB 容器未起。
+
+## 公网 UDP 入口(`udp_port`, Unity/标准 UDP 客户端)
+
+- nginx **不参与** UDP: 隧道配了 `udp_port` 后, 公网入口是 `<服务器公网IP>:udp_port` 直连 FastAPI 进程;
+  安全组/防火墙必须**放行入站 UDP** 该端口(TCP 443/80 与它无关)。
+- 必须**单 worker**(`UDP_LISTEN_HOST` 默认 `0.0.0.0`); 混部部署同样直连进程, 无子路径概念。
+- 公网 IP 固定时在 `.env` 写 `UDP_PUBLIC_HOST=<公网IP>`, 管理页显示 Unity 该填的 `Server Address:Port`。
+- Unity 客户端的具体填法与限制见 `docs/unity-ngo.md`。
+
 - **首启没出现管理员创建提示**: stdin 不是终端(如 systemd 直接拉起) — 属正常降级为
   `.env INITIAL_ADMIN_PASSWORD`/随机+日志打印; 想交互创建就手动在终端先跑一次。

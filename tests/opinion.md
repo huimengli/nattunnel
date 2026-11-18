@@ -28,3 +28,11 @@
 - 结果: 3/3 轮 PASS(每轮 6 项) → tests/2026-11-04-20-17-27_cc/(record_1..3 + opinion.md)
 - 关键结论: 编辑/新建判定须用弹窗打开时记录的 editingTid(生成短链大小写混合, 大写化后查不到 → 走 POST → 409 tunnel id already exists);
   改动前还会静默大写手填 ID(abHjkmn2 → ABHJKMN2), 编辑态改 ID 会新建隧道; 修复后: PATCH 原 ID, 改 ID 被拒(零请求), 700 夹到 600, 9 位 ID 拒。
+
+## 2026-11-18-13-03-15 批次(明确测试 20 轮): Unity 标准 UDP 入口(`udp_port` + `udp_allow`) — 20 轮全 PASS
+
+- 场景: 每轮全新 sqlite 库 + 全新单 worker 服务器进程; 内网回显与真实客户端在测试进程内; 台架 `tools/unity_udp_test.py` 9 项 + selftest 53 项(阶段 A-G) + api_check 26 项。
+- 结果: 20/20 轮 PASS(0 失败) → tests/2026-11-18-13-03-15_cc/(record_1..20 + opinion.md)
+- 关键结论: 标准 UDP 端点可脱离 WebSocket 与内网服务完整往返; 每个源 `ip:port` = 独立 peer_id 且与 WS 子协议裸流共存; 白名单/超限丢弃/空闲回收/改端口重绑/停用删除解绑/重启后启动自动绑定全部有效; 公网 UDP 端口唯一(409), 非 `udp` 隧道自动清空字段。
+- 修复: `main.py` relay import 整块被删(`RELAY_SUBPROTOCOL` 未定义); 客户端 `run_udp` 首包竞态(与 2026-11-03 TCP 路径同法); 自测 `udp_native` 阻塞 recv 饿死回显。
+- 待办: 真实公网/防火墙入站 UDP + Unity 真机验证; 客户端源码改动需重编译 exe(`client/build.bat`)。

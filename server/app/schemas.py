@@ -52,6 +52,11 @@ class TunnelCreate(BaseModel):
     bandwidth_kbps: int = Field(default=0, ge=0)
     # 响应头等待窗口(秒): 请求体入隧后, 本地服务必须在此窗口内吐响应头; 超时 504
     header_timeout_s: int = Field(default=30, ge=1, le=600)
+    # 公网 UDP 端口(标准 UDP 入口): 仅 proto=udp 生效; 留空 = 不开公网 UDP 端口
+    udp_port: Optional[int] = Field(default=None, ge=1, le=65535,
+        description="公网 UDP 端口(Unity Transport / 标准 UDP 客户端连 <服务器IP>:该端口)")
+    # UDP 入口源 IP 白名单: 逗号分隔 IP/CIDR/前缀, 空 = 放行全部(UDP 无鉴权, 白名单是唯一访问控制)
+    udp_allow: str = Field(default="", max_length=255)
 
 
 class TunnelUpdate(BaseModel):
@@ -61,6 +66,8 @@ class TunnelUpdate(BaseModel):
     local_target_host: Optional[str] = Field(default=None, min_length=1, max_length=255)
     bandwidth_kbps: Optional[int] = Field(default=None, ge=0)
     header_timeout_s: Optional[int] = Field(default=None, ge=1, le=600)
+    udp_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    udp_allow: Optional[str] = Field(default=None, max_length=255)
     enabled: Optional[bool] = None
 
 
@@ -73,6 +80,10 @@ class TunnelOut(BaseModel):
     local_target_host: str
     bandwidth_kbps: int
     header_timeout_s: int
+    udp_port: Optional[int] = None
+    udp_allow: str = ""
+    udp_public: Optional[str] = None      # 公网 UDP 入口(Unity 的 Server Address:Server Port)
+    udp_peers: int = 0                    # 当前经 UDP 入口接入的对端数
     enabled: bool
     lan_online: bool = False
     pub_count: int = 0

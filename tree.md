@@ -13,7 +13,8 @@ nattunnel/
 │   ├── 2026-09-11-00-33-34.md … 2026-09-12-11-24-24.md   # 历史会话(骨架/凭据/部署/下载)
 │   ├── 2026-11-03-13-21-03.md   # 会话: 协议改造 http/tcp/udp + WebSocket 握手桥接
 │   ├── 2026-11-04-19-06-38.md   # 会话: 14:34 断线诊断 + 隧道配置项 header_timeout_s(默认30/上限600)
-│   └── 2026-11-04-20-17-27.md   # 会话: 管理页“编辑隧道”保存失败(大小写短链 → POST → 409)
+│   ├── 2026-11-04-20-17-27.md   # 会话: 管理页“编辑隧道”保存失败(大小写短链 → POST → 409)
+│   └── 2026-11-18-13-03-15.md   # 会话: Unity 标准 UDP 入口(udp_port/udp_allow) + 实测根因备忘
 ├── ai_buckup/                   # 归档(仅本次已归档的台账/问答)
 │   ├── progress.md_2026-11-03-18-58-00.md
 │   └── need_user.md_2026-11-03-18-58-00.md
@@ -21,7 +22,8 @@ nattunnel/
 │   ├── opinion.md               # 累积结论
 │   ├── 2026-11-03-13-21-03_cc/  # 本批次 20 轮: record_1..20.md + opinion.md
 │   ├── 2026-11-04-19-06-38_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md
-│   └── 2026-11-04-20-17-27_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md(台架对照)
+│   ├── 2026-11-04-20-17-27_cc/  # 本批次 3 轮(验证): record_1..3.md + opinion.md(台架对照)
+│   └── 2026-11-18-13-03-15_cc/  # 本批次 20 轮: record_1..20.md + opinion.md(Unity UDP 原生入口)
 │
 ├── server/                      # FastAPI 后端(单 worker)
 │   ├── requirements.txt         # fastapi/uvicorn[standard]/sqlalchemy/pymysql/cryptography/PyJWT/redis/python-dotenv
@@ -36,12 +38,13 @@ nattunnel/
 │       ├── main.py              # FastAPI 应用 + /tunnel/{tid} WS 中继(角色判定/data_types/子协议回填)
 │       ├── config.py            # .env 配置读取
 │       ├── database.py          # SQLAlchemy engine/session/Base + reconfigure()
-│       ├── models.py            # User / Tunnel(proto http|tcp|udp, 带宽, 响应超时秒) / AppSetting
+│       ├── models.py            # User / Tunnel(proto http|tcp|udp, 带宽, 响应超时秒, udp_port/udp_allow) / AppSetting
 │       ├── schemas.py           # Pydantic 请求/响应(proto 取值校验)
 │       ├── security.py          # pbkdf2 密码哈希 / JWT / RSA 密钥对管理
 │       ├── deps.py              # Bearer 鉴权依赖
 │       ├── http_bridge.py       # 隧道桥: 纯 HTTP 直转(仅 http 隧道, 响应头窗口逐请求取隧道配置) + WS 握手桥接(WSCodec) + 预拒绝
 │       ├── relay.py             # Hub/Room 房间表, 帧编解码, RELAY_SUBPROTOCOL, data_type, Redis 在线/限流
+│       ├── udp_relay.py         # UDP 原生入口: UdpPeer/UdpEndpoint/UdpHub(公网 UDP 端口, 源 IP=peer, 白名单/空闲回收)
 │       ├── seed.py              # 建表 + 首启管理员 + 一次性 tcp→http 迁移 + 演示隧道 + RSA 键
 │       ├── routers/             # auth(login/RSA) / users / tunnels(CRUD+token) / download
 │       └── static/
@@ -55,13 +58,18 @@ nattunnel/
 │   ├── build.bat                # [-s <server>] 写死地址 + PyInstaller --onefile [--icon ..\favicon.ico]
 │   └── nattunnel-client.spec    # PyInstaller 规格
 │
-├── docs/deploy-keliit-top.md    # keliit.top 子路径混部完整步骤
+├── docs/                      # 部署与集成指南
+│   ├── deploy-keliit-top.md   # keliit.top 子路径混部完整步骤(含 UDP 入站端口)
+│   └── unity-ngo.md           # Unity(NGO/UnityTransport) 接标准 UDP 入口: 填法/限制/踩坑
 └── tools/                       # 公网侧/端到端测试工具(需 pip install websockets)
     ├── ws_tcp_test.py           # 子协议 nattunnel-relay 字节流裸流(HELLO/echo)
     ├── ws_udp_test.py           # 子协议 nattunnel-relay 数据报(HELLO/echo)
     ├── ws_handshake_test.py     # 浏览器式 WS 握手桥接(握手结果/子协议/echo)
     ├── header_timeout_test.py   # 阶段 F: header_timeout_s(默认30/上限600) 端到端 + 504 文案 + 逐请求热生效
-    ├── selftest.py              # 端到端: A 字节流+热更新 / B UDP / C 绑定令牌 / D 纯 HTTP 直转 / E WS 握手桥接
-    ├── api_check.py             # API 全链路(含 proto 取值与改协议)
+    ├── selftest.py              # 端到端: A 字节流+热更新 / B UDP / C 绑定令牌 / D 纯 HTTP 直转 / E WS 握手桥接 / G UDP 原生入口
+    ├── api_check.py             # API 全链路(含 proto 取值与改协议、udp_port 唯一性/清空/解绑)
+    ├── udp_native_test.py       # 纯 UDP 公网侧工具(不经 WS): 直连 IP:udp_port 收发数据报
+    ├── unity_udp_test.py        # 台架: 每轮全新库+服务器跑 selftest/api_check + UDP 入口生命周期(20 轮)
+    ├── exe_e2e_test.py          # exe 端到端验收(真实构建产物: 上线/桥接/纯 HTTP 直转/旧构建不兼容)
     └── admin_ui_logic_test.js   # 台架: 抽管理页函数体验证编辑/新建判定(大小写短链/PATCH vs POST)
 ```

@@ -127,14 +127,18 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
     <table id="tunnels-table">
       <thead><tr>
         <th>短链 ID</th><th>名称</th><th>属主</th><th>协议</th><th>本地端口</th><th>本地目标</th>
-        <th>带宽(kbps)</th><th>响应超时(s)</th><th>启用</th><th>exe 在线</th><th>公网连接</th><th>创建时间</th><th>操作</th>
+        <th>带宽(kbps)</th><th>响应超时(s)</th><th>UDP 端口(公网)</th><th>启用</th><th>exe 在线</th><th>公网连接</th><th>创建时间</th><th>操作</th>
       </tr></thead>
       <tbody></tbody>
     </table>
     <p class="muted" style="margin-top:10px">协议(同一入口 <span class="mono">/tunnel/短链</span>, 按<b>连接类型</b>分流; 一条隧道只有一个本地端口):<br>
       <b>http</b> —— 混合隧道: 浏览器直开短链(逐请求 HTTP 直转 + HTML <base> 注入) + 页面里的 WebSocket(握手桥接到内网服务) + 子协议 <span class="mono">nattunnel-relay</span> 的帧协议裸流(等价 tcp 访问);<br>
       <b>tcp</b> —— 原生 TCP 字节流: WebSocket 握手桥接(101 与数据帧双向透明) + 子协议裸流; <b>纯 HTTP 请求拒绝(400)</b>;<br>
-      <b>udp</b> —— 仅子协议裸流的数据报(WS 握手拒绝)。浏览器 <span class="mono">new WebSocket()</span> 无法自定义头, 因此"不带子协议的 WS 握手"= 桥接到内网服务。</p>
+      <b>udp</b> —— 仅子协议裸流的数据报(WS 握手拒绝)。浏览器 <span class="mono">new WebSocket()</span> 无法自定义头, 因此"不带子协议的 WS 握手"= 桥接到内网服务;<br>
+      <b>UDP 原生入口(Unity 用)</b> —— udp 隧道填"公网 UDP 端口"后, 服务器直接开一个<b>标准 UDP 端口</b>: 公网侧向
+      <span class="mono">服务器公网IP:UDP端口</span> 收发数据报, 不需要 WebSocket/子协议/自定义头 ——
+      Unity Netcode(UnityTransport, 纯 UDP)只需把 <b>Server Address = 公网 IP, Server Port = UDP 端口</b> 填上, 零代码改动;
+      每个源地址=一个对端, 空闲 60 秒回收, <b>不鉴权</b>(用"源 IP 白名单" + 随机高位端口控制, 详见 docs/unity-ngo.md)。</p>
   </div>
 
   <!-- 客户端接入信息 -->
@@ -181,8 +185,11 @@ details summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-bo
       <div><label>本地目标主机</label><input id="tm-host" value="127.0.0.1" placeholder="127.0.0.1"></div>
       <div><label>带宽上限 kbps(0=不限)</label><input id="tm-bw" type="number" min="0" value="0"></div>
       <div><label>响应超时(s) 1-600</label><input id="tm-htimeout" type="number" min="1" max="600" value="30"></div>
+      <div><label>公网 UDP 端口(仅 udp; 留空=不开)</label><input id="tm-udpport" type="number" min="1" max="65535" placeholder="如 16000"></div>
+      <div><label>UDP 源 IP 白名单(逗号分隔, 空=放行)</label><input id="tm-udpallow" placeholder="如 1.2.3.4, 10.0.0.0/8"></div>
     </div>
     <p class="muted" id="proto-hint" style="margin:6px 0 0"></p>
+    <p class="muted" id="udp-hint" style="margin:6px 0 0"></p>
     <div class="row">
       <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="tm-enabled" type="checkbox" style="width:auto" checked> 启用</label>
       <span class="muted" id="tm-hint"></span>
@@ -330,6 +337,7 @@ async function refreshAll() {
   try { await api("api/health"); setHealth(true); } catch (e) { setHealth(false); return; }
   try {
     state.tunnels = await api("api/tunnels") || [];
+    try { state.udp = await api("api/udp/status"); } catch (e) { state.udp = null; }
     renderTunnels();
     fillTokenSelect();
   } catch (e) { /* 401 已处理 */ }
@@ -360,6 +368,7 @@ function renderTunnels() {
       `<td class="mono">${esc(t.local_target_host || "127.0.0.1")}</td>` +
       `<td>${bwTxt}</td>` +
       `<td>${htTxt}</td>` +
+      `<td class="mono">${t.udp_port ? esc(t.udp_public || String(t.udp_port)) : "-"}${t.udp_peers ? " · 对端" + t.udp_peers : ""}</td>` +
       `<td><span class="badge ${t.enabled ? "on" : "off"}">${t.enabled ? "启用" : "停用"}</span></td>` +
       `<td><span class="badge ${t.lan_online ? "on" : "off"}">${t.lan_online ? "在线" : "离线"}</span></td>` +
       `<td>${t.pub_count}</td>` +
@@ -371,7 +380,7 @@ function renderTunnels() {
     tbody.appendChild(tr);
   }
   if (!state.tunnels.length) {
-    tbody.innerHTML = `<tr><td colspan="13" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14" class="muted">还没有隧道 — 点右上角“新建隧道”。</td></tr>`;
   }
 }
 
@@ -390,6 +399,9 @@ function openTunnelModal(tid) {
   document.getElementById("tm-host").value = t ? (t.local_target_host || "127.0.0.1") : "127.0.0.1";
   document.getElementById("tm-bw").value = t ? t.bandwidth_kbps : 0;
   document.getElementById("tm-htimeout").value = t ? (t.header_timeout_s || 30) : 30;
+  document.getElementById("tm-udpport").value = (t && t.udp_port) ? t.udp_port : "";
+  document.getElementById("tm-udpallow").value = t ? (t.udp_allow || "") : "";
+  udpHint();
   document.getElementById("tm-enabled").checked = t ? !!t.enabled : true;
   document.getElementById("tm-hint").textContent = t && (t.lan_online || t.pub_count) ? "注意: 修改将断开该隧道现有连接" : "";
   showModal("tunnel-modal");
@@ -398,11 +410,28 @@ function openTunnelModal(tid) {
 const PROTO_HINT = {
   "http": "http = 混合隧道: 浏览器直开短链(逐请求直转 + base 注入) + 页面内 WebSocket(握手桥接) + 子协议 nattunnel-relay 裸流。",
   "tcp": "tcp = 原生字节流: WebSocket 握手桥接到内网服务(101/数据帧双向透明) + 子协议裸流; 纯 HTTP 请求会被拒绝(400)。",
-  "udp": "udp = 数据报: 仅子协议 nattunnel-relay 的帧协议数据报, 无 HTTP/WS 桥接语义。",
+  "udp": "udp = 数据报: 子协议 nattunnel-relay 帧协议数据报 + (配了公网 UDP 端口时)标准 UDP 入口; 无 HTTP/WS 桥接语义。",
 };
 function protoHint() {
   const el = document.getElementById("proto-hint");
   if (el) el.textContent = PROTO_HINT[document.getElementById("tm-proto").value] || "";
+  udpHint();
+}
+/* UDP 原生入口: 公网展示地址来自 /api/udp/status 的 public_host */
+function udpPublicOf(t) {
+  const host = (state.udp && state.udp.public_host) ? state.udp.public_host : "<服务器公网IP>";
+  return t.udp_public || (host + ":" + t.udp_port);
+}
+function udpHint() {
+  const el = document.getElementById("udp-hint");
+  if (!el) return;
+  const proto = document.getElementById("tm-proto").value;
+  const port = document.getElementById("tm-udpport").value.trim();
+  if (proto !== "udp") { el.textContent = "UDP 端口与白名单只对 udp 隧道生效(其他协议保存时会被清空)。"; return; }
+  if (!port) { el.textContent = "未填公网 UDP 端口: 该隧道只能走子协议 nattunnel-relay 裸流(Unity/标准 UDP 客户端连不上)。"; return; }
+  const host = (state.udp && state.udp.public_host) ? state.udp.public_host : "<服务器公网IP>";
+  el.textContent = "Unity(UnityTransport)填: Server Address = " + host + ", Server Port = " + port + ";",
+  el.textContent += " 内网机用 exe 上线并让游戏服务监听隧道的本地端口; UDP 入口不鉴权, 建议填源 IP 白名单。";
 }
 
 async function saveTunnel() {
@@ -414,7 +443,11 @@ async function saveTunnel() {
   const bw = Math.max(0, parseInt(document.getElementById("tm-bw").value || "0", 10));
   const htimeout = Math.min(600, Math.max(1, parseInt(document.getElementById("tm-htimeout").value || "30", 10)));
   const enabled = document.getElementById("tm-enabled").checked;
+  const udpRaw = document.getElementById("tm-udpport").value.trim();
+  const udpPort = udpRaw ? Math.min(65535, Math.max(1, parseInt(udpRaw, 10))) : null;
+  const udpAllow = document.getElementById("tm-udpallow").value.trim();
   if (!port || port < 1 || port > 65535) return toast("本地端口必须是 1-65535", "err");
+  if (udpPort && proto !== "udp") return toast("公网 UDP 端口只对 udp 隧道生效(改协议或清空该字段)", "err");
   /* 编辑/新建判定用弹窗打开时的 ID(editingTid): 生成的短链是大小写混合的
      (ALPHABET 含小写字母), 大写化后查不到 -> 走 POST -> 409 "tunnel id already exists" */
   let tid;
@@ -427,10 +460,11 @@ async function saveTunnel() {
   }
   try {
     if (editingTid) {
-      await api("api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout, enabled } });
+      await api("api/tunnels/" + tid, { method: "PATCH", body: { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout, udp_port: udpPort, udp_allow: udpAllow, enabled } });
       toast("隧道已更新", "ok");
     } else {
-      const body = { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout };
+      const body = { name, proto, local_port: port, local_target_host: host, bandwidth_kbps: bw, header_timeout_s: htimeout, udp_allow: udpAllow };
+      if (udpPort) body.udp_port = udpPort;
       if (tid) body.tunnel_id = tid;
       await api("api/tunnels", { method: "POST", body });
       toast("隧道已创建", "ok");
@@ -487,6 +521,12 @@ function baseSnippet(tid) {
     s += "\n\n隧道 " + t.tunnel_id + ": " + t.proto + " -> " +
          (t.local_target_host || "127.0.0.1") + ":" + t.local_port +
          (t.bandwidth_kbps ? "  带宽=" + t.bandwidth_kbps + "kbps" : "  带宽=不限");
+    if (t.proto === "udp" && t.udp_port) {
+      s += "\n\nUDP 原生入口(Unity/标准 UDP 客户端直连, 无需 WebSocket): " + udpPublicOf(t) +
+           "\n  Unity: Server Address = 公网IP, Server Port = " + t.udp_port +
+           "; 内网机 Unity 以 Server 监听 " + (t.local_target_host || "127.0.0.1") + ":" + t.local_port +
+           "\n  每个源地址=一个对端(空闲60秒回收); 不鉴权(白名单=" + (t.udp_allow || "放行全部") + "); 步骤见 docs/unity-ngo.md";
+    }
     s += "\n访问方式: " + (PROTO_HINT[t.proto] || "");
   }
   return s;

@@ -11,16 +11,28 @@
     (proto=http/tcp), 握手与数据帧双向透明 —— 本中继不参与。
 
 本中继处理的公网侧连接 = 声明 WS 子协议 nattunnel-relay 的"帧协议裸流"客户端。
+
+另有 **UDP 原生入口**(`udp_relay.py`, 不在本路径上): 配了 `udp_port` 的 udp 隧道在服务器上是标准
+UDP 端点 `<公网IP>:udp_port`, 供 Unity Transport(NGO)等只能讲标准 UDP 的客户端直连 —— 与本子协议裸流
+共用房间与帧(0x41), 每个源地址=一个 peer_id。
 """
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
-from .config import WS_MAX_SIZE
+from .config import (
+    UDP_IDLE_TIMEOUT,
+    UDP_LISTEN_HOST,
+    UDP_MAX_DATAGRAM,
+    UDP_MAX_PEERS,
+    UDP_PUBLIC_HOST,
+    WS_MAX_SIZE,
+)
 from .database import SessionLocal
+from .deps import get_current_user
 from .http_bridge import HttpBridgeMiddleware
 from .models import Tunnel, User
 from .relay import (
@@ -42,6 +54,7 @@ from .relay import (
 from .routers import auth, download, tunnels, users
 from .security import decode_token
 from .seed import init_db
+from .udp_relay import udp_hub
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,8 +71,10 @@ async def lifespan(_app):
         log.info("redis ok")
     except Exception as exc:
         log.warning("redis unavailable (%s); 在线状态/登录限流降级", exc)
+    await udp_hub.start()   # UDP 原生入口: 绑定库里全部已配置的 udp_port(标准 UDP 客户端直连)
     log.info("nattunnel ready (single worker required)")
     yield
+    await udp_hub.stop()
 
 
 app = FastAPI(title="nattunnel", version="0.1.0", lifespan=lifespan)
@@ -79,6 +94,19 @@ def health():
     except Exception:
         redis_ok = False
     return {"ok": True, "redis": redis_ok}
+
+
+@app.get("/api/udp/status")
+def udp_status(user: User = Depends(get_current_user)):
+    """UDP 原生入口总览: 监听地址/公网展示地址/回收参数 + 已绑定端点与对端数。"""
+    return {
+        "listen_host": UDP_LISTEN_HOST,
+        "public_host": UDP_PUBLIC_HOST,
+        "idle_timeout_s": UDP_IDLE_TIMEOUT,
+        "max_peers": UDP_MAX_PEERS,
+        "max_datagram": UDP_MAX_DATAGRAM,
+        "endpoints": udp_hub.endpoint_list(),
+    }
 
 
 # ---------------------------------------------------------------- helpers

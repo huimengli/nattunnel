@@ -19,3 +19,11 @@
   - [x] 前端: editingTid 判定 + ID 只读 + 8 位大小写正则 + PATCH 用原 ID
   - [x] 验证 3 轮(台架对照 HEAD/工作区) → tests/2026-11-04-20-17-27_cc/
   - [ ] 生产: 覆盖 index.html(无需重启) + Ctrl+F5 复验
+- [x] 2026-11-18-13-03-15 Unity 标准 UDP 入口(公网 UDP 端口映射): `udp_port`/`udp_allow` + `udp_relay.py` + 管理页 + tools/udp_native_test + selftest 阶段 G + docs/unity-ngo.md (→ records/2026-11-18-13-03-15.md)
+  - [x] 服务端: config 五参数 / models+seed 幂等 ALTER / schemas / `udp_relay.py`(UdpPeer/UdpEndpoint/UdpHub) / main(lifespan + `GET /api/udp/status`) / routers(端口唯一性 409 + 绑定/解绑)
+  - [x] 管理页: UDP 端口(公网)列 + `tm-udpport`/`tm-udpallow` + Unity(UnityTransport) 提示 + 启动片段 UDP 段
+  - [x] 客户端: `run_udp` 首包竞态修复(`peer_tasks` 等建端任务完成再投数据) —— 与 2026-11-03 TCP 路径同款
+  - [x] 工具与实测: `tools/udp_native_test.py`(纯 UDP 公网侧) + selftest 阶段 G(21 项) + `tools/unity_udp_test.py` 台架 20 轮 9/9 全 PASS → tests/2026-11-18-13-03-15_cc/ + tests/opinion.md
+  - [x] 文档: README(协议表/API/帧/自测/安全) + docs/unity-ngo.md + docs/deploy-keliit-top.md(入站 UDP) + tree.md
+  - [ ] 生产: 服务器放行**入站 UDP** + 网页建 udp 隧道配 `udp_port` + Unity 真机(UnityTransport) 连一次(台架是 127.0.0.1 回环)
+  - [ ] 生产: 客户端源码已改 → 重编译 exe(`client\build.bat -s <服务器地址>`) 并用 `tools/exe_e2e_test.py` 验收

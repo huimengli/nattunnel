@@ -5,10 +5,12 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ..config import UDP_LISTEN_HOST, UDP_PUBLIC_HOST
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Tunnel, User
 from ..relay import hub, lan_online, push_config_to_lan
+from ..udp_relay import public_display, udp_hub
 from ..schemas import TokenOut, TunnelCreate, TunnelOut, TunnelUpdate
 from ..security import create_access_token
 
@@ -40,6 +42,17 @@ def _check_access(user: User, tunnel: Tunnel) -> None:
         raise HTTPException(status_code=403, detail="not your tunnel")
 
 
+def _check_udp_port(db: Session, port: int, tid: str | None = None) -> None:
+    """公网 UDP 端口唯一性: 同一端口只能属于一条隧道(否则绑定会撞车)。"""
+    q = db.query(Tunnel).filter(Tunnel.udp_port == port)
+    if tid:
+        q = q.filter(Tunnel.tunnel_id != tid)
+    hit = q.first()
+    if hit is not None:
+        raise HTTPException(status_code=409,
+                            detail=f"UDP 端口 {port} 已被隧道 {hit.tunnel_id} 占用")
+
+
 @router.post("/tunnels/{tid}/token", response_model=TokenOut)
 def issue_tunnel_token(tid: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """为指定隧道签发绑定令牌(属主或管理员)。
@@ -66,6 +79,10 @@ def _to_out(tunnel: Tunnel, owner_name: str) -> TunnelOut:
         local_target_host=tunnel.local_target_host or "127.0.0.1",
         bandwidth_kbps=tunnel.bandwidth_kbps,
         header_timeout_s=int(tunnel.header_timeout_s or 30),
+        udp_port=int(tunnel.udp_port or 0) or None,
+        udp_allow=tunnel.udp_allow or "",
+        udp_public=public_display(int(tunnel.udp_port or 0), UDP_PUBLIC_HOST),
+        udp_peers=udp_hub.peer_count(tunnel.tunnel_id),
         enabled=bool(tunnel.enabled),
         lan_online=online,
         pub_count=pub_count,
@@ -88,7 +105,7 @@ def list_tunnels(
 
 
 @router.post("/tunnels", response_model=TunnelOut, status_code=201)
-def create_tunnel(
+async def create_tunnel(
     body: TunnelCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ):
     tid = body.tunnel_id or _gen_tunnel_id(db)
@@ -96,6 +113,12 @@ def create_tunnel(
         db.query(Tunnel).filter_by(tunnel_id=body.tunnel_id).first() is not None
     ):
         raise HTTPException(status_code=409, detail="tunnel id already exists")
+    # UDP 原生入口只对 udp 隧道生效(非 udp 隧道的公网入口是 HTTP/WS)
+    is_udp = body.proto == "udp"
+    udp_port = int(body.udp_port) if (is_udp and body.udp_port) else None
+    udp_allow = (body.udp_allow or "").strip() if is_udp else ""
+    if udp_port:
+        _check_udp_port(db, udp_port)
     tunnel = Tunnel(
         tunnel_id=tid,
         owner_id=user.id,
@@ -105,14 +128,19 @@ def create_tunnel(
         local_target_host=(body.local_target_host or "127.0.0.1").strip(),
         bandwidth_kbps=body.bandwidth_kbps,
         header_timeout_s=body.header_timeout_s,
+        udp_port=udp_port,
+        udp_allow=udp_allow,
         enabled=True,
     )
     db.add(tunnel)
     db.commit()
     db.refresh(tunnel)
+    if udp_port:
+        await udp_hub.sync(tunnel)   # 绑定公网 UDP 端口(失败已在 udp_relay 记日志)
     log.info(
-        "user '%s' created tunnel %s (%s:%s, %skbps, 响应头窗口 %ss)",
+        "user '%s' created tunnel %s (%s:%s, %skbps, 响应头窗口 %ss, UDP 入口 %s)",
         user.username, tid, body.proto, body.local_port, body.bandwidth_kbps, body.header_timeout_s,
+        public_display(udp_port, UDP_PUBLIC_HOST) or "无",
     )
     return _to_out(tunnel, user.username)
 
@@ -133,14 +161,22 @@ async def update_tunnel(
     _check_access(user, tunnel)
     data = body.model_dump(exclude_unset=True)
     proto_before = tunnel.proto
+    # udp_port / udp_allow 只对 udp 隧道有意义(非 udp 隧道清空, 以免管理页留下无意义的配置)
+    if "proto" in data and data["proto"] != "udp":
+        data["udp_port"] = None
+        data["udp_allow"] = ""
+    if data.get("udp_port"):
+        _check_udp_port(db, int(data["udp_port"]), tid)
     for field, value in data.items():
         setattr(tunnel, field, value)
     db.commit()
     db.refresh(tunnel)
+    # UDP 原生入口按新配置绑定/解绑(端口不变时只热刷新白名单与启用状态)
+    await udp_hub.sync(tunnel)
     # 配置热更新:
     #   协议变更 -> 所有现有流失效, 拆除房间(客户端会自动重连并拉新配置);
     #   端口/带宽/目标主机变更 -> T_CONFIG 推给在线 LAN 侧, 现有连接保持;
-    #   header_timeout_s 是服务端参数(http_bridge 逐请求读库), 不需要推给客户端。
+    #   header_timeout_s / udp_port / udp_allow 是服务端参数, 不推 T_CONFIG。
     if "proto" in data and data["proto"] != proto_before:
         hub.drop(tid)
     elif {"local_port", "bandwidth_kbps", "local_target_host"} & data.keys():
@@ -154,9 +190,10 @@ async def update_tunnel(
 
 
 @router.delete("/tunnels/{tid}", status_code=204)
-def delete_tunnel(tid: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+async def delete_tunnel(tid: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     tunnel = _get_tunnel(db, tid)
     _check_access(user, tunnel)
+    await udp_hub.unbind(tunnel.tunnel_id, "隧道删除")
     hub.drop(tunnel.tunnel_id)
     db.delete(tunnel)
     db.commit()
