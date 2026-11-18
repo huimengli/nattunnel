@@ -2,6 +2,7 @@
 
 > 需求记录: `records/2026-11-18-13-03-15.md`。适用: Unity Netcode for GameObjects 的 `UnityTransport`
 > 等只能讲标准 UDP(不能写 WebSocket 子协议)的客户端: UDP 游戏服、语音、KCP 类自建 UDP 服务。
+> 已知限制清单(哪里会咬人 / mitigations)见 `docs/unity-noties.md`。
 
 ## 原理(一句话)
 
