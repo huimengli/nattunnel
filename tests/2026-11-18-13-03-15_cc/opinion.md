@@ -25,3 +25,9 @@
 - 真实公网 + 防火墙入站 UDP 放行(台架是 127.0.0.1 回环, 不经 nginx/防火墙)。Unity 真机(UnityTransport)未实测, 需按 `docs/unity-ngo.md` 上线后验一次。
 - **exe 需重编译**: 客户端源码改了首包竞态, 现网 exe 仍是旧行为(`client/build.bat -s <服务器地址>`, 用 `tools/exe_e2e_test.py` 验收)。
 - UDP 丢包/乱序/重传(Netcode 自身语义)、跨 NAT 源端口变化、`bandwidth_kbps` 对 UDP 的客户端限速未在本批专项覆盖。
+
+## 清理后复验(第 21-23 轮, 验证 3 轮)
+
+- 动因: 首包竞态排查时临时加进 client/nattunnel_client.py(udp rx / peer sendto)与 server/app/udp_relay.py(回包)的 [dbg] 日志随 2dd3a20 一起进了仓库, 属临时诊断(非项目日志约定), 已删除。
+- 结果: 3/3 轮 9/9 全 PASS(每轮 selftest 53 项 + api_check 26 项) → record_21..23.md; 全仓 grep [dbg] 0 命中。
+- 顺带确认: UdpEndpoint.send_to 用 asyncio.DatagramTransport.sendto(payload, addr)(同步方法)跨进程投递正常 —— 此前"回包不送达"是测试脚本阻塞 recv 饿死同进程回显(踩坑 15), 不是服务端发送原语问题(独立探针跨进程收到回包)。

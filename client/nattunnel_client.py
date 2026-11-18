@@ -352,8 +352,6 @@ class DatagramProto(asyncio.DatagramProtocol):
         self.sockname = transport.get_extra_info("sockname")
 
     def datagram_received(self, data, addr):
-        log.info("[dbg] udp rx %dB from %s", len(data), addr)  # 临时诊断
-
         if self._fut is not None and not self._fut.done():
             self._fut.set_result((data, addr))
         else:
@@ -450,7 +448,6 @@ async def run_udp(ws, tcfg: dict, bucket: TokenBucket):
                 if not payload:
                     continue
                 await bucket.consume(len(payload))
-                log.info("[dbg] peer %s sendto %dB -> %s:%s", pid, len(payload), live["host"], live["port"])  # 临时诊断
                 entry["transport"].sendto(payload, (live["host"], live["port"]))  # sendto 是同步方法
             elif type_ == T_CLOSE:
                 await drop_peer(pid)

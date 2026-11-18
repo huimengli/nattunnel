@@ -36,3 +36,4 @@
 - 关键结论: 标准 UDP 端点可脱离 WebSocket 与内网服务完整往返; 每个源 `ip:port` = 独立 peer_id 且与 WS 子协议裸流共存; 白名单/超限丢弃/空闲回收/改端口重绑/停用删除解绑/重启后启动自动绑定全部有效; 公网 UDP 端口唯一(409), 非 `udp` 隧道自动清空字段。
 - 修复: `main.py` relay import 整块被删(`RELAY_SUBPROTOCOL` 未定义); 客户端 `run_udp` 首包竞态(与 2026-11-03 TCP 路径同法); 自测 `udp_native` 阻塞 recv 饿死回显。
 - 待办: 真实公网/防火墙入站 UDP + Unity 真机验证; 客户端源码改动需重编译 exe(`client/build.bat`)。
+- 追加(验证 3 轮, 第 21-23 轮): 删除随 feat 提交进仓库的 `[dbg]` 临时诊断日志(客户端 2 处 + 服务端 1 处)后复验 **3/3 轮 9/9 全 PASS**; 并确认 `DatagramTransport.sendto` 跨进程投递正常(先前"回包不送达"是测试脚本阻塞 recv 饿死同进程回显, 见踩坑 15)。

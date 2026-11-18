@@ -87,7 +87,7 @@ class UdpPeer:
         if fpid != self.pid:
             return
         if type_ == U_DATA and payload:
-            log.info("[dbg] 回包 peer %d %dB -> %s", self.pid, len(payload), self.addr)  # 临时诊断
+            # 回包只发回该源地址(connected UDP 语义): 数据帧不含对端信息, 由端点记账
             self.endpoint.send_to(self.addr, payload)
         # T_FIN/T_CLOSE 对 UDP 无意义: 忽略
 
