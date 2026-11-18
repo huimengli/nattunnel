@@ -17,7 +17,6 @@
 - **UDP 原生入口(2026-11-18)**: `udp` 隧道可配 `udp_port`(公网 UDP 端口)+ `udp_allow`(源 IP 白名单); 服务器在该端口直接收发数据报(nginx 不参与); 每个源 `ip:port` = 一个 peer_id(与子协议裸流共用房间与 `0x41` 帧); Unity `UnityTransport` 填 `Server Address=公网IP` + `Server Port=udp_port`(`docs/unity-ngo.md`)。
 - 公网侧 WS 归属: Bearer→LAN; 子协议 `nattunnel-relay`→帧协议裸流; 其余(浏览器式)→ http_bridge 桥接到内网 WS 服务。
 - 存量 `proto=tcp`(旧浏览器直开语义)首启一次性迁移为 `http`(`proto_tcp_to_http_v1` 标记)。
-
 ## 凭据 / 环境
 | 项 | 值 |
 |---|---|
@@ -26,7 +25,6 @@
 | 后端默认地址 | http://127.0.0.1:8000 (server/ 目录 `python run.py`) |
 | MySQL/Redis | server/docker-compose.yml 一键起(无 Redis 时在线状态/限流降级内存) |
 | 本机自测 | `.venv` + `DATABASE_URL=sqlite:///./selftest.db` + `INITIAL_ADMIN_PASSWORD` 环境变量; `.env` 缺失会触发首启交互向导 |
-
 ## 状态总览
 - [x] 骨架 + 台账(progress.md / tree.md / records/ / todo.md / need_user.md / tests/)
 - [x] 后端: 用户/JWT/RSA 登录/隧道 CRUD/WS 中继/种子数据/绑定令牌
@@ -43,7 +41,6 @@
 - [ ] 部署到 www.keliit.top: 子路径 `/tunnel/` + `/nattunnel-admin/`; 部署后改管理员密码(步骤见 docs/deploy-keliit-top.md)
 - [ ] `tcp+udp` 同端口双栈混合(2026-11-03 用户选方案A, 列为后续需求)
 - [ ] Unity 真机(UnityTransport) + 真实公网/防火墙入站 UDP 验一次; 客户端首包修复后重编译 exe(`client\build.bat`) 并 `tools/exe_e2e_test.py` 验收
-
 ## 会话摘要(最近)
 ### 2026-11-18 13:03 — records/2026-11-18-13-03-15.md (Unity 标准 UDP 入口, 分支 feature/AI_Unity)
 - 需求原文: “现在项目的 UDP 不是标准的 UDP 端口映射, 我需要给 UNITY 用…新增一个 unity 选项? 走分支 feature/AI_Unity”。定案: **不新增 `proto=unity`** —— Unity 用的就是标准 UDP(新增取值=同一语义两个名字); Unity 入口 = `udp` 隧道 + `udp_port`/`udp_allow` + 管理页提示 + `docs/unity-ngo.md`。
@@ -61,7 +58,6 @@
 
 ### 2026-11-03 13:21 — records/2026-11-03-13-21-03.md (协议改造 http/tcp/udp + WS 握手桥接)
 - `relay.py`: `PROTOS=(http,tcp,udp)` + `RELAY_SUBPROTOCOL` + `data_type(proto)` + `alloc_peer(room)`; `http_bridge.py` 新增 `WSCodec`(最小 RFC6455 编解码) + 握手透传(101 用同一 key 完成 accept 并回带子协议) + `_ws_reject` 预拒绝; 纯 HTTP 直转限定 `http`; 客户端 `proto in (tcp,http)` 走字节流, 仅切 `udp` 需重连; 方案A(用户拍板): 不新增 mixed, `http` 即混合; 20 轮全 PASS(32+18)。
-
 ## 踩坑备忘(后续会话必读)
 1. **PyInstaller --onefile 是双进程**: 杀 exe 用 `taskkill /F /IM nattunnel-client.exe`(父进程 kill 会留孤儿子进程)。
 2. **TCP 建连竞态**: 公网侧数据帧可能早于 LAN 客户端建连完成 → 主循环先 `await open_tasks[pid]` 再入队(UDP 路径同款见 17)。
@@ -81,7 +77,6 @@
 16. **改 import 不要整块替换**: 为加 `/api/udp/status` 重排 `main.py` import 时删掉 `from .relay import (...)` → `RELAY_SUBPROTOCOL` 未定义 + 握手未完成表征, 自测 A-E/G 的“lan 侧上线”全 FAIL(不是语法错误, 难一眼看出)。
 17. **UDP 入口首包竞态(与 TCP 同款)**: `run_udp` 的 `T_NEW` 建端是 `create_task`, 首包 `U_DATA` 早于其完成 → `peers.get(pid)` 为 None 丢首包; **服务端加睡眠无效**(帧已在客户端缓冲), 必须客户端 `await peer_tasks[pid]` 再投数据。
 18. **台架 Windows 细节**: `stdin=subprocess.DEVNULL` 使 `isatty()` 为真 → 服务器走首启向导后 `SystemExit: 已取消`(用 `stdin=PIPE`); 进程退出后 sqlite 文件释放有延迟(删库需重试); 父进程 GBK 控制台打印中文需 `sys.stdout.reconfigure` + 子进程 `PYTHONIOENCODING=utf-8`。
-
 ## 风险 / 注意事项
 1. 公网侧入口不鉴权(含 WS 桥接与子协议裸流) → 必须上 TLS; 短链可猜 → 敏感业务轮换 ID / 防火墙限 IP。
 2. 多 worker 会破坏内存中继(含 UDP 房间); 扩缩容需先做 Redis Pub/Sub 化(未来工作)。
@@ -89,12 +84,12 @@
 4. 客户端不持有本地配置(仅绑定令牌; 服务器地址构建时写死)。
 5. WS 桥接不做 permessage-deflate(桥接层无扩展); 浏览器↔内网服务的压缩由各自实现负责。
 6. **UDP 原生入口不鉴权且不经 nginx**: 需放行**入站 UDP**(与 443/80 无关), 用 `udp_allow` + 随机高位端口; Unity `Server Address` 是公网 IP(域名需先解析), 换 IP 要改 Unity 配置; 服务端不重复限流(限速在客户端)。
-
 ## Git 提交记录
 | hash | 类型 | 说明 | 状态 |
 |---|---|---|---|
 | `2dd3a20` | feat(AI) | UDP 原生入口(`udp_port`/`udp_allow` + `udp_relay.py` + `/api/udp/status` + 管理页 Unity 提示 + 客户端首包竞态修复; 20 轮 9/9 全 PASS) | **已本地 commit, 未 push** |
 | `c79f236` | docs(AI) | progress 归档(120 行全量入 ai_buckup) + 本次会话条目 + tree/README/unity 文档 | **已本地 commit, 未 push** |
+| `2572c29` | docs(AI) | progress 精简至 100 行内 + 补 hash(本表后续 hash 见 `git log`) | **已本地 commit, 未 push** |
 | `7844f34` | fix(AI) | 管理页“编辑隧道”保存走 POST → 409(大小写短链); 台架 3 轮全 PASS | **已本地 commit, 未 push** |
 | `d3ec4ae` | docs(AI) | progress 追加本次会话条目(断线诊断 + header_timeout_s) | **已本地 commit, 未 push** |
 | `872ede9` | feat(AI) | 隧道配置项 header_timeout_s(响应头窗口 默认30/上限600) + 阶段 F 9 项 3 轮全 PASS | **已本地 commit, 未 push** |
